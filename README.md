@@ -7,6 +7,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/wrencanfly/openRocode/actions/workflows/tests.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/wrencanfly/openRocode/tests.yml?branch=main&label=tests&style=flat-square"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-171717?style=flat-square"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-171717?style=flat-square&logo=python&logoColor=white">
   <img alt="Simulator: MuJoCo" src="https://img.shields.io/badge/sim-MuJoCo-171717?style=flat-square">
@@ -229,7 +230,17 @@ Next:
 
 ## Contributing
 
-Issues and pull requests are welcome. Run `pytest` before sending a change; tests need no API key. New robots belong in `rocode/body/`, new capabilities in `rocode/ext/`. Please keep the core small.
+openRocode is early, and focused contributions change a lot. Good places to start:
+
+| You want to | Start in | Guide |
+|---|---|---|
+| Connect a robot or simulator | `rocode/body/` | [Add a body](CONTRIBUTING.md#add-a-robot-or-simulator-a-body) |
+| Add a task | `rocode/tasks.py` | [Add a task](CONTRIBUTING.md#add-a-task) |
+| Support another model API | `rocode/providers/` | [Add a provider](CONTRIBUTING.md#add-a-model-provider) |
+| Add a capability or tool | `rocode/ext/` | [Rules the harness depends on](CONTRIBUTING.md#rules-the-harness-depends-on) |
+| Improve the dashboard | `rocode/view/static/` | [DESIGN.md](DESIGN.md) |
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before your first pull request: it covers setup, the five rules every change keeps, and what a pull request needs. Issues labelled [`good first issue`](https://github.com/wrencanfly/openRocode/labels/good%20first%20issue) are ready to pick up. Tests need no API key.
 
 ## License
 
