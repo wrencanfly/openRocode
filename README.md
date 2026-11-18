@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wordmark-dark.svg">
-    <img alt="openRocode" src="docs/assets/wordmark-light.svg" width="460">
-  </picture>
+  <img alt="openRocode" src="docs/assets/banner.svg" width="100%">
 </p>
 
 <p align="center">
