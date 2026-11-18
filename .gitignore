@@ -1,26 +1,20 @@
-# Rust
-/target/
-**/*.rs.bk
-
 # Python
 __pycache__/
 *.py[cod]
 .venv/
 *.egg-info/
+build/
+dist/
 .pytest_cache/
 .ruff_cache/
 
-# Recordings & Runtime Artifacts
-/recordings/
-*.mcap
-*.sock
+# Episode recordings and simulator output
+runs/
+recordings/
+MUJOCO_LOG.TXT
 
-# OS & Editor
+# OS, editors, secrets
 .DS_Store
 .env
 .env.*
 !.env.example
-
-# Simulator and agent run output
-MUJOCO_LOG.TXT
-runs/

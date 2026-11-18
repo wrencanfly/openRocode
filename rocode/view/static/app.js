@@ -99,8 +99,13 @@ function stopPolling() { clearInterval(poller); poller = null; }
 function route() {
   stopPolling(); stopPlay();
   const h = location.hash.slice(1) || "/";
-  const m = h.match(/^\/e\/([^?]+)(?:\?mode=(debug|watch))?$/);
-  if (m) return openEpisode(decodeURIComponent(m[1]), m[2]);
+  const m = h.match(/^\/e\/([^?]+)(?:\?(.*))?$/);
+  if (m) {
+    const q = new URLSearchParams(m[2] || "");
+    const mode = ["debug", "watch"].includes(q.get("mode")) ? q.get("mode") : null;
+    const step = q.has("step") ? Math.max(1, parseInt(q.get("step"), 10) || 1) - 1 : null;  // 1-based in links
+    return openEpisode(decodeURIComponent(m[1]), mode, step);
+  }
   return openHome();
 }
 addEventListener("hashchange", route);
@@ -153,7 +158,7 @@ function flattenSteps(ep) {
 }
 const obsById = (id) => view.ep.observations.find((o) => o.id === id);
 
-async function openEpisode(id, mode) {
+async function openEpisode(id, mode, step) {
   Object.assign(view, { id, ep: null, steps: [], idx: 0, follow: true, sig: "" });
   app.innerHTML = `<div class="home"><p class="mute">Loading episode…</p></div>`;
   try { view.ep = await getJSON(`api/episodes/${encodeURIComponent(id)}`); } catch (e) {
@@ -162,7 +167,8 @@ async function openEpisode(id, mode) {
   }
   view.mode = mode || (view.ep.live ? "watch" : "debug");
   ingest(view.ep);
-  view.idx = Math.max(0, view.steps.length - 1);
+  view.idx = step != null ? Math.min(step, view.steps.length - 1) : Math.max(0, view.steps.length - 1);
+  view.follow = view.idx === view.steps.length - 1;
   mount();
   if (view.ep.live) poller = setInterval(refresh, 800);
 }
@@ -409,8 +415,8 @@ function updateDebug() {
   wireChart($("#views"));
   $("#ticks").innerHTML = view.steps.map((s, i) => `<button data-i="${i}" aria-current="${i === view.idx}" aria-label="Step ${i + 1}, ${esc(s.obs)}">${esc(s.obs)}</button>`).join("");
   $$("#ticks button").forEach((b) => (b.onclick = () => go(+b.dataset.i)));
-  const tick = $(`#ticks button[data-i="${view.idx}"]`);
-  if (tick) tick.scrollIntoView({ block: "nearest", inline: "nearest" });
+  const ticks = $("#ticks"), tick = $(`#ticks button[data-i="${view.idx}"]`);
+  if (tick) ticks.scrollLeft = Math.max(0, tick.offsetLeft - ticks.offsetLeft - (ticks.clientWidth - tick.offsetWidth) / 2);
 }
 
 /* ---- watch mode ---------------------------------------------------------------------------- */
@@ -465,8 +471,9 @@ function updateWatch() {
       <div class="lbl"><span>${esc(ob.id)}</span><span>${s.turn === 0 ? "first look" : esc(s.call.name)}</span></div></button>`;
   }).join("");
   $$(".shot").forEach((b) => (b.onclick = () => go(+b.dataset.i)));
-  const cur = $(`.shot[data-i="${view.idx}"]`);
-  if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
+  // Scroll only the strip sideways; scrollIntoView would also scroll the page on every step.
+  const strip = $("#strip"), cur = $(`.shot[data-i="${view.idx}"]`);
+  if (cur) strip.scrollLeft = Math.max(0, cur.offsetLeft - strip.offsetLeft - (strip.clientWidth - cur.offsetWidth) / 2);
 }
 
 /* ---- start --------------------------------------------------------------------------------- */

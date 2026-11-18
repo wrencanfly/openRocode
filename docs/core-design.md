@@ -1,6 +1,6 @@
 # rocode 核心设计（v0）
 
-状态：已实现，代码在 `python/rocode/`。参考了 [pi](https://github.com/badlogic/pi-mono) 的 agent 核心（`packages/agent`），以及 [uni-robot-agent](https://github.com/Open-RUA/uni-robot-agent) 在物理动作上的一些约定。定位和路线见 [design.md](design.md)。
+状态：已实现，代码在 `rocode/`。参考了 [pi](https://github.com/badlogic/pi-mono) 的 agent 核心（`packages/agent`），以及 [uni-robot-agent](https://github.com/Open-RUA/uni-robot-agent) 在物理动作上的一些约定。定位和路线见 [design.md](design.md)。
 
 ## 0. 目标与非目标
 
@@ -271,7 +271,7 @@ v0 只做两个：
 1. **模型**：提示词里的建议，不作为任何保证。
 2. **外壳**：`safety_gate` 扩展在执行前拒绝越界或不合理的目标，并确认没有执行。
 3. **身体**：每个动作都带 `Guard`，力或速度超限就停下后退；`stop()` 随时可用。
-4. **真机**（v0 不做）：独立的高频安全回路，跑在机器人旁边，不经过 Python 和网络。之前的 Rust 原型就是这一层的雏形。
+4. **真机**（v0 不做）：独立的高频安全回路，跑在机器人旁边，不经过 Python 和网络。
 
 ## 13. 录制格式
 
@@ -303,7 +303,7 @@ rocode eval --tasks mug_to_coaster,lift_block --seeds 0-9 \
 ## 15. 目录结构与代码量预算
 
 ```
-python/rocode/
+rocode/
   core/        loop.py  events.py  hooks.py  messages.py  control.py      约 500 行
   providers/   anthropic.py  openai_compat.py                              约 300 行
   body/        base.py  mujoco.py  robodojo.py                             约 600 行
