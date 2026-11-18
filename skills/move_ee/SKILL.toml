@@ -1,0 +1,10 @@
+name = "move_ee"
+description = "L1 direct spatial primitive: move end-effector to target 3D pose or relative delta with smooth interpolation and contact-force stop."
+kind = "direct_primitive"
+rate_hz = 200
+heartbeat_timeout_ms = 50
+timeout_sec = 8.0
+max_retries = 1
+
+[preconditions]
+max_base_distance_m = 1.0

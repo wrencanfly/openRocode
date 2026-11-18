@@ -1,6 +1,6 @@
 name = "pick_object"
-description = "Closed-loop VLA grasp primitive with workspace preconditions and watchdog bounds."
-kind = "vla_chunk"
+description = "Optional L3 policy plugin: closed-loop learned grasp policy for contact-rich / deformable objects."
+kind = "policy_plugin"
 rate_hz = 30
 heartbeat_timeout_ms = 80
 timeout_sec = 12.0

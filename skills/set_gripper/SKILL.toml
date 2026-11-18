@@ -1,0 +1,7 @@
+name = "set_gripper"
+description = "L1 direct primitive: open or close gripper with target aperture and grasp-force limit."
+kind = "direct_primitive"
+rate_hz = 100
+heartbeat_timeout_ms = 50
+timeout_sec = 3.0
+max_retries = 1

@@ -52,13 +52,16 @@ impl Default for SafetyEnvelope {
     }
 }
 
-/// Execution paradigm of a registered skill.
+/// Execution tier of a registered skill in the LLM-first control hierarchy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillKind {
-    VlaChunk,
-    AnalyticTrajectory,
-    AtomicService,
+    /// L1: Built-in deterministic spatial/motor primitive driven directly by the LLM (zero VLA dependency).
+    DirectPrimitive,
+    /// L2: On-the-fly parameterized trajectory or spatial constraint synthesized by the LLM.
+    SynthesizedTrajectory,
+    /// L3: Optional external high-frequency policy plugin (RL gait, VLA, or WAM co-processor).
+    PolicyPlugin,
 }
 
 /// Machine-checked physical preconditions declared in `SKILL.toml`.
