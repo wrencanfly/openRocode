@@ -123,6 +123,21 @@ impl MockRobotAdapter {
         [r * q[0].cos(), r * q[0].sin(), z]
     }
 
+    /// Where the shoulder joint sits above the table, for drawing the arm.
+    pub fn shoulder_xyz() -> [f64; 3] {
+        [0.0, 0.0, Self::BASE_Z]
+    }
+
+    /// Where the elbow is for the given joint angles, for drawing the arm.
+    pub fn elbow_xyz(q: &[f64]) -> [f64; 3] {
+        let (q0, q1) = (
+            q.first().copied().unwrap_or(0.0),
+            q.get(1).copied().unwrap_or(0.0),
+        );
+        let r = Self::L1 * q1.cos();
+        [r * q0.cos(), r * q0.sin(), Self::BASE_Z + Self::L1 * q1.sin()]
+    }
+
     fn compute_contact_force(&self) -> f64 {
         let table_penetration = 0.006 - self.ee_xyz_m[2];
         if table_penetration > 0.0 {

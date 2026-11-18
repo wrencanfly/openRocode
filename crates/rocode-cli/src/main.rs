@@ -86,19 +86,20 @@ enum Commands {
     },
 }
 
-fn build_planner(choice: PlannerChoice, model: Option<&str>) -> Arc<dyn System2Planner> {
+/// Returns the planner and whether it is the scripted offline stand-in rather than a real model.
+fn build_planner(choice: PlannerChoice, model: Option<&str>) -> (Arc<dyn System2Planner>, bool) {
     match choice {
-        PlannerChoice::Demo => Arc::new(SpatialDemoPlanner),
+        PlannerChoice::Demo => (Arc::new(SpatialDemoPlanner), true),
         PlannerChoice::Api => match ApiLlmPlanner::from_env(model) {
-            Ok(p) => Arc::new(p),
+            Ok(p) => (Arc::new(p), false),
             Err(err) => {
                 eprintln!("[rocode] error: {err}");
                 std::process::exit(2);
             }
         },
         PlannerChoice::Auto => match ApiLlmPlanner::from_env(model) {
-            Ok(p) => Arc::new(p),
-            Err(_) => Arc::new(SpatialDemoPlanner),
+            Ok(p) => (Arc::new(p), false),
+            Err(_) => (Arc::new(SpatialDemoPlanner), true),
         },
     }
 }
@@ -147,8 +148,8 @@ fn main() {
             model,
             record,
         } => {
-            let p = build_planner(planner, model.as_deref());
-            if let Err(err) = tui::run_tui(&workdir, &skills_dir, p, record) {
+            let (p, offline) = build_planner(planner, model.as_deref());
+            if let Err(err) = tui::run_tui(&workdir, &skills_dir, p, offline, record) {
                 eprintln!("[rocode tui] error: {err}");
                 std::process::exit(1);
             }
@@ -188,7 +189,7 @@ fn main() {
             fault_spike_at,
             fault_slip_at,
         } => {
-            let p = build_planner(planner, model.as_deref());
+            let (p, _) = build_planner(planner, model.as_deref());
             let mut robot = MockRobotAdapter::new(6, 2_000_000);
             if let Some(step) = fault_spike_at {
                 robot = robot.with_effort_spike_at_step(step);

@@ -1518,6 +1518,7 @@ dependencies = [
  "rocode-safety",
  "rocode-vlm",
  "serde_json",
+ "unicode-width",
 ]
 
 [[package]]

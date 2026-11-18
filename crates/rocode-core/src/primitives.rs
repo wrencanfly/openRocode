@@ -365,10 +365,11 @@ impl ActiveSkillRunner {
                             ),
                         };
                     }
+                    let holding = state.held_object_id.as_deref().unwrap_or("nothing");
                     return StepStatus::Completed {
                         summary: format!(
-                            "Gripper aperture={:.2} (held={:?})",
-                            state.gripper_open_ratio, state.held_object_id
+                            "Gripper at {:.0}% open, holding {holding}",
+                            state.gripper_open_ratio * 100.0
                         ),
                     };
                 }

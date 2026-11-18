@@ -19,3 +19,4 @@ rocode-recorder.workspace = true
 rocode-safety.workspace = true
 rocode-vlm.workspace = true
 serde_json.workspace = true
+unicode-width = "0.2"

@@ -47,17 +47,18 @@ impl System2Planner for SpatialDemoPlanner {
 
         // Goal pattern A: Guarded surface touch / probing
         if g.contains("touch") || g.contains("probe") || g.contains("contact") {
-            if history.iter().any(|h| h.contains("Guarded contact detected")) {
+            let touched = history.iter().any(|h| h.contains("Guarded contact detected"));
+            if touched && history.len() >= 2 {
+                return Ok(PlanStep::Done {
+                    summary: "Completed guarded surface contact probe and returned home.".into(),
+                });
+            }
+            if touched {
                 return Ok(PlanStep::Invoke(SkillCall {
                     thought: "Surface height measured via guarded contact; retracting to safe home.".into(),
                     skill_name: "home_arm".into(),
                     arguments: json!({}),
                 }));
-            }
-            if history.len() >= 2 {
-                return Ok(PlanStep::Done {
-                    summary: "Completed guarded surface contact probe and returned home.".into(),
-                });
             }
             return Ok(PlanStep::Invoke(SkillCall {
                 thought: "Descending along -Z with stop_on_contact_n=5.0N to detect tabletop.".into(),
@@ -86,6 +87,15 @@ impl System2Planner for SpatialDemoPlanner {
         let want_mug = g.contains("mug") || g.contains("cup") || g.contains("tidy") || g.is_empty();
         let want_wipe = g.contains("wipe") || g.contains("spill") || g.contains("clean") || g.contains("tidy");
 
+        // Anything else is beyond this scripted stand-in. Say so rather than report success.
+        if !want_mug && !want_wipe && !g.contains("home") {
+            return Err(
+                "the scripted demo planner only understands the mug, spill, probe, plugin and \
+                 home goals. Set ANTHROPIC_API_KEY or OPENAI_API_KEY to plan with a real model"
+                    .into(),
+            );
+        }
+
         let mug = state.scene_objects.iter().find(|o| o.id == "red_mug");
         let coaster = state.scene_objects.iter().find(|o| o.id == "coaster");
         let spill = state.scene_objects.iter().find(|o| o.id == "spill_patch");
@@ -104,10 +114,13 @@ impl System2Planner for SpatialDemoPlanner {
                     // Ensure gripper is open before approaching mug
                     if state.gripper_open_ratio < 0.7 {
                         return Ok(PlanStep::Invoke(SkillCall {
-                            thought: format!(
-                                "Re-opening gripper before re-approaching red_mug (last_failure={:?}).",
-                                last_failure.map(|f| &f.code)
-                            ),
+                            thought: match last_failure {
+                                Some(f) => format!(
+                                    "Re-opening gripper before re-approaching red_mug; the last step failed: {}",
+                                    f.message
+                                ),
+                                None => "Opening gripper before approaching red_mug.".into(),
+                            },
                             skill_name: "set_gripper".into(),
                             arguments: json!({ "open_ratio": 1.0 }),
                         }));
