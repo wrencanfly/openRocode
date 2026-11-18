@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/rocode-proto",
+    "crates/rocode-safety",
+    "crates/rocode-transport",
+    "crates/rocode-recorder",
+    "crates/rocode-context",
+    "crates/rocode-adapters",
+    "crates/rocode-vlm",
+    "crates/rocode-core",
+    "crates/rocode-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/wrencanfly/openRocode"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+thiserror = "2.0"
+clap = { version = "4.5", features = ["derive"] }
+
+rocode-proto = { path = "crates/rocode-proto" }
+rocode-safety = { path = "crates/rocode-safety" }
+rocode-transport = { path = "crates/rocode-transport" }
+rocode-recorder = { path = "crates/rocode-recorder" }
+rocode-context = { path = "crates/rocode-context" }
+rocode-adapters = { path = "crates/rocode-adapters" }
+rocode-vlm = { path = "crates/rocode-vlm" }
+rocode-core = { path = "crates/rocode-core" }

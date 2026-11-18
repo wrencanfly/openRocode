@@ -1,0 +1,11 @@
+name = "pick_object"
+description = "Closed-loop VLA grasp primitive with workspace preconditions and watchdog bounds."
+kind = "vla_chunk"
+rate_hz = 30
+heartbeat_timeout_ms = 80
+timeout_sec = 12.0
+max_retries = 2
+
+[preconditions]
+require_gripper_open = true
+max_base_distance_m = 0.85
