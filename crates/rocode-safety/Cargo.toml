@@ -1,9 +1,0 @@
-[package]
-name = "rocode-safety"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-rocode-proto.workspace = true
-serde.workspace = true

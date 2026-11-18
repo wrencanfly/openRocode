@@ -1,0 +1,39 @@
+[project]
+name = "openrocode"
+version = "0.2.0.dev0"
+description = "An open harness that lets multimodal models drive robots the way they use computers"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+keywords = ["robotics", "llm", "agents", "mujoco", "computer-use", "code-as-policy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence"
+]
+dependencies = []
+
+[project.optional-dependencies]
+sim = ["mujoco>=3.2", "numpy>=1.26", "pillow>=10"]
+agent = ["anthropic>=0.70"]
+openai = ["openai>=1.0"]
+dev = ["pytest>=8"]
+
+[project.urls]
+Repository = "https://github.com/wrencanfly/openRocode"
+
+[project.scripts]
+rocode = "rocode.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rocode"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

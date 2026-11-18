@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="rocode-token" content="{{TOKEN}}">
+<meta name="rocode-live" content="{{LIVE}}">
+<title>openRocode</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23171717' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M5 20h14M8 20v-5l4-3 5-6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="static/app.css">
+<script>
+  (function () {  // apply a saved theme before first paint
+    var t = new URLSearchParams(location.search).get("theme");
+    try { t = t || localStorage.getItem("rocode-theme"); } catch (e) {}
+    if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  })();
+</script>
+</head>
+<body>
+<header class="topbar">
+  <a class="wordmark" href="#/" aria-label="openRocode, all episodes"></a>
+  <nav class="crumbs" id="crumbs"></nav>
+  <div class="spacer"></div>
+  <div id="bar-right" class="bar-right"></div>
+  <button class="btn icon-btn" id="theme" aria-label="Switch between light and dark"></button>
+</header>
+<main id="app"></main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="static/app.js"></script>
+</body>
+</html>

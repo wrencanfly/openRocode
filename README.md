@@ -1,68 +1,248 @@
-# openRocode (`rocode`)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wordmark-dark.svg">
+    <img alt="openRocode" src="docs/assets/wordmark-light.svg" width="460">
+  </picture>
+</p>
 
-**LLM-First Terminal Robotics CLI & Embodied Execution Harness.**
+<p align="center">
+  <strong>Let multimodal models drive robots the way they use computers.</strong>
+</p>
 
-`openRocode` gives frontier Multimodal LLMs (`OpenAI`, `Anthropic`, `Gemini`, open-weights VLMs) a **safe, real-time physical body** out of the box—**with zero VLA or policy training required**—while still letting you plug in high-frequency RL/VLA/WAM co-processors whenever contact-rich tasks demand them.
+<p align="center">
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-171717?style=flat-square"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-171717?style=flat-square&logo=python&logoColor=white">
+  <img alt="Simulator: MuJoCo" src="https://img.shields.io/badge/sim-MuJoCo-171717?style=flat-square">
+  <img alt="Models: Claude and OpenAI-compatible" src="https://img.shields.io/badge/models-Claude%20%7C%20OpenAI--compatible-171717?style=flat-square">
+  <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-E8A33D?style=flat-square">
+</p>
 
-## Core Philosophy: Built for LLMs, Grounded in Physics
+<p align="center">
+  <a href="#quick-start">Quick start</a>&nbsp;&nbsp;&nbsp;
+  <a href="#features">Features</a>&nbsp;&nbsp;&nbsp;
+  <a href="#the-dashboard">Dashboard</a>&nbsp;&nbsp;&nbsp;
+  <a href="#how-it-works">How it works</a>&nbsp;&nbsp;&nbsp;
+  <a href="#status-and-roadmap">Roadmap</a>
+</p>
 
-`openRocode` treats the **frontier LLM/VLM as the primary driver** and equips it with a three-tier control hierarchy guarded by a deterministic **500 Hz Rust S0 Safety Arbiter**:
+<p align="center">
+  <img src="docs/assets/dashboard-watch.webp" alt="The openRocode dashboard replaying a real episode: Claude Opus 5.5 writes programs that pick up the blue block and set it on the red mug, shown in two camera views with readings and a telemetry chart." width="100%">
+</p>
+<p align="center"><sub>A real, unscripted run. Claude Opus 5.5, allowed to act only through programs, stacks the block on the mug in 5 turns and 18 seconds.</sub></p>
 
-| Tier | Mode | Who Drives | Built-in / Example Skills |
-|---|---|---|---|
-| **L1: Direct Spatial Primitives** *(Built-in, Zero VLA)* | `direct_primitive` | LLM directly outputs 3D targets, guarded contact thresholds, and gripper apertures | `move_ee` (min-jerk + IK + guarded contact force stop), `set_gripper` (empty-grasp detection), `home_arm` |
-| **L2: On-the-fly Trajectory Synthesis** *(Zero VLA)* | `synthesized_trajectory` | LLM synthesizes parametric curves or multi-waypoint paths tracked at 200 Hz | `trace_path` (`circle` / `waypoints` for wiping, stirring, pouring, obstacle clearance) |
-| **L3: Policy Co-processors** *(Optional Isolated Plugins)* | `policy_plugin` | LLM invokes external 30–100 Hz RL / VLA / WAM subprocesses over UDS under an 80 ms Watchdog | `pick_object` (`python/examples/mock_policy_worker.py`) |
+openRocode is an open agent harness that turns robot control into **3D computer use**. The model looks at camera pictures, clicks where the gripper should go, nudges in directions it can see, or writes a short Python program for the parts that need loops and checks. The harness does the geometry, guards every motion, lets a person step in at any moment, and records everything.
 
-## Quickstart
+**The model never sees or writes a world coordinate.** Depth, calibration and frames stay inside the harness. Tools speak pixels, centimetres and "left in the front camera".
+
+## Quick start
 
 ```bash
-# 1. Launch the interactive Ratatui robotics cockpit (60 FPS UI + 500 Hz S0 loop + 2D workspace radar)
-#    Uses OPENAI_API_KEY / ANTHROPIC_API_KEY automatically when set, or built-in spatial planner offline.
-cargo run -p rocode-cli -- tui
+git clone https://github.com/wrencanfly/openRocode.git
+cd openRocode
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[sim,agent,openai,dev]'
 
-# 2. Inspect registered L1 / L2 / L3 skill contracts
-cargo run -p rocode-cli -- skills
-
-# 3. Run a full headless tabletop episode with mid-air grasp slip injection & autonomous re-grasp recovery
-cargo run -p rocode-cli -- run "Put the red mug on the coaster and wipe the spill" \
-  --fault-slip-at 800 \
-  --record recordings/slip_recovery.rlog
-
-# 4. Time-travel inspect the recorded episode & captured blackbox failure trace
-cargo run -p rocode-cli -- replay recordings/slip_recovery.rlog --at-ms 1550 --failures
-
-# 5. Run all unit & end-to-end closed-loop tests (including Python UDS worker + 80ms Watchdog SafeHold)
-cargo test
+rocode demo        # a scripted episode, no API key: checks your install
+pytest             # 28 tests, about 5 seconds, no API key
 ```
 
-### Interactive TUI Slash Commands (`rocode tui`)
+Then give a model the arm, and watch it in the dashboard:
 
-- Type any goal (e.g., `put red mug on coaster and wipe spill`, `probe table contact`, `run l3 plugin`) and press `Enter`
-- `/takeover` — Instant **Operator Teleop Override** (`W/S`: ±X, `A/D`: ±Y, `Q/E`: ±Z, `Space`: Gripper, `Esc`: Release)
-- `/hold` / `/resume` — Trigger or clear S0 `SAFE_HOLD`
-- `/inject slip` | `/inject spike` — Inject live grasp-slip or 95 Nm effort-spike faults mid-execution
-- `/estop` / `/reset` — Emergency Stop (de-energize motors) or reset tabletop world
-- `/save [path]` — Persist `.rlog` flight blackbox to disk
+```bash
+# Claude via the Anthropic API (ANTHROPIC_API_KEY, or `ant auth login`)
+rocode run mug_to_coaster --view
 
-## Workspace Layout
+# Any OpenAI-compatible endpoint: OpenAI, Qwen, DeepSeek, vLLM, LiteLLM proxies
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=https://your-endpoint/v1
+rocode run mug_to_coaster --view --provider openai --model claude-opus-5-5
+```
+
+`rocode tasks` lists the tasks. `rocode view` browses every recorded episode. `rocode replay runs/<episode>` prints one in the terminal.
+
+## Features
+
+### Point, don't compute
+
+`move_to(camera, x, y)` sends the gripper above whatever is under that pixel. Each picture is labelled (`o1`, `o2`, …) and a click is bound to the exact pictures the model looked at, so a gripper that later blocks the view cannot change what was clicked. Results come back as annotated pictures: the fingertip, its drop line to the table, and the last click are drawn on.
+
+### Tools or programs, chosen by the model
+
+The model can act one step at a time, or hand a sequence to `run_code` when it needs loops, retries or checks on the readings. Every robot call a program makes goes through the same validation, safety hooks and emergency stop as a direct call. Programs cannot see pictures, so the model looks first and then writes code against what it saw.
+
+<p align="center">
+  <img src="docs/assets/dashboard-code.png" alt="Debug layout in light theme: the timeline shows the model's programs with each robot call they made; the right side shows both cameras holding the block, readings of 1.4 cm height, holding 4 cm, 4.8 N contact force, and a telemetry chart." width="100%">
+</p>
+
+### Step in at any time
+
+While a run is going, tell the model something ("not that one, the one on the left"), pause it, or stop it, from the terminal or the dashboard. Messages reach the model before its next decision and stay in the record.
+
+<p align="center">
+  <img src="docs/assets/dashboard-steer.png" alt="Debug layout in dark theme: in turn 2 the timeline shows an operator message asking the model to lift the gripper to at least 20 cm before finishing; the model later did, ending at 21.3 cm." width="100%">
+</p>
+
+### Safety that does not depend on the model
+
+Every motion is force-guarded and workspace-checked by the body. Physical actions are never retried automatically, and an action that stops early cancels the rest of that turn's actions. An emergency stop halts motion immediately, including inside a running program.
+
+### Any model, one harness
+
+Claude through the Anthropic API, or any OpenAI-compatible endpoint. History is append-only, so prompt caches stay warm and Claude's thinking blocks stay valid. Swap the model with a flag; nothing else changes.
+
+### Every run is recorded
+
+Each episode is an event log plus every picture the model was shown, scored against the simulator's ground truth, which the model never sees.
+
+<p align="center">
+  <img src="docs/assets/dashboard-home.png" alt="Dashboard home in light theme: a table of episodes with task, model, result, turns, duration, tokens and start time." width="100%">
+</p>
+
+### Small and hackable
+
+A pi-style core of about 700 lines: loop, events, hooks and a control channel. Tools, safety, recording, the dashboard and the robot itself are plug-ins.
+
+## The dashboard
+
+```bash
+rocode run mug_to_coaster --view   # opens on the live run, with controls
+rocode view                        # every episode in ./runs, including runs still going
+```
+
+- **Episodes**: every run with its model, result, turns, duration and tokens.
+- **Debug**: the turn-by-turn timeline (what the model said, each call, each program with its robot calls and output) beside both cameras, the readings for the selected step, and a telemetry chart.
+- **Watch**: both cameras fill the page, with the telemetry chart and a strip of every picture the model saw. A running episode opens here.
+
+Light and dark themes, arrow keys to step, space to replay, and links that open on a given step (`#/e/<episode>?mode=watch&step=5`). It is plain HTML and JavaScript served by Python's standard library: no build step, no Node. It listens on 127.0.0.1 only, and control requests need a token that only its own page carries.
+
+## What a run looks like
+
+A lightly trimmed excerpt from `rocode run mug_to_coaster` with Claude Opus 5.5. The model points once, then writes a program for the fiddly part: nudge, turn 90° so the fingers miss the handle, lower, grip, lift.
 
 ```text
-openRocode/
-├── crates/
-│   ├── rocode-proto/       # Wire schemas: FrameRef, SkillKind (L1/L2/L3), SkillSpec, FailureTrace, UDS protocol
-│   ├── rocode-safety/      # Deterministic 500Hz S0 Safety Arbiter (joint/EE clamps, watchdog, teleop mux, E-Stop)
-│   ├── rocode-transport/   # Tensor ring buffer + Unix Domain Socket policy subprocess supervisor
-│   ├── rocode-recorder/    # Persistent `.rlog` NDJSON Flight Recorder & time-travel replay queries
-│   ├── rocode-context/     # Multimodal context ring buffer & pre-failure blackbox window slicer
-│   ├── rocode-adapters/    # EmbodimentAdapter + 6-DoF tabletop micro-world (IK, contact spring, grasp physics)
-│   ├── rocode-vlm/         # Live HTTP LLM planner (OpenAI / Anthropic) + offline reactive SpatialDemoPlanner
-│   ├── rocode-core/        # S2-S1-S0 state machine + L1/L2 trajectory executors + mid-motion slip monitor
-│   └── rocode-cli/         # `rocode` CLI (`tui`, `run`, `replay`, `skills`, `check`) + Ratatui cockpit
-├── python/
-│   ├── openrocode_sdk/     # UDS `PolicyWorker` base class for optional L3 RL/VLA plugins
-│   └── examples/           # `mock_policy_worker.py` (with `--stall-at-step` watchdog test hook)
-├── skills/                 # L1 (`move_ee`, `set_gripper`, `home_arm`), L2 (`trace_path`), L3 (`pick_object`)
-└── docs/
-    └── architecture.md     # Full architecture design & v0.1-v0.4 roadmap
+── turn 1
+   ▶ move_to {"camera": "front", "x": 379, "y": 165, "hover_cm": 5}
+   ✓ Hovering 5 cm above the point you clicked in o1.  [o2]
+
+── turn 2
+   ▶ run_code
+     │ print(robot.nudge("side", right_cm=1.5).text)
+     │ print(robot.turn(90).text)
+     │ r=robot.lower(7); print(r.text, r.height_cm)
+      ✓ Nudged.  [o3]
+      ✓ Turned 90°.  [o4]
+      ✓ Lowered 7.0 cm.  [o5]
+
+── turn 3
+   model: Fingers straddle the mug in side view. Lower more and grip.
+   ▶ run_code
+     │ r=robot.lower(4); print(r.text)
+     │ r=robot.grip("close"); print(r.text, r.holding)
+     │ r=robot.nudge("front", up_cm=10); print(r.text)
+      ✓ Lowered 3.6 cm and stopped on contact.  [o6]
+      ✓ Closed. Something 6.0 cm wide is between the fingers.  [o7]
+      ✓ Nudged.  [o8]
+   ...
+── ended: done after 6 steps, 6 turns, 22.5 s
+   ground truth: success=True
 ```
+
+## The model's tools
+
+| Tool | What it does |
+|---|---|
+| `look()` | Fresh pictures from every camera. |
+| `move_to(camera, x, y, hover_cm=8, observation=None)` | Hover above the surface point under that pixel. Rises, travels, descends; stops on contact. |
+| `lower(cm=None)` | Straight down until contact, or by `cm`. |
+| `nudge(camera, right_cm, away_cm, up_cm)` | A small move in directions as seen in that camera's picture. |
+| `turn(degrees)` | Rotate the gripper about the vertical. |
+| `grip("close" \| "open")` | Reports whether something is between the fingers, and how wide. |
+| `run_code(code)` | Run a Python program against the same tools through a `robot` object. |
+| `done(success, summary)` | End the episode. |
+
+Every result says what actually happened (reached, touched something, blocked, refused), how high the fingertips are and what the gripper holds. Programs get the same facts as values:
+
+```python
+r = robot.lower()
+if not r.touched:
+    raise SystemExit("nothing under the gripper")
+r = robot.grip("close")
+print(r.holding, r.opening_cm, r.height_cm, r.stop)
+```
+
+`--policy tools|code|both` sets how the model may act. The default is `both`.
+
+## How it works
+
+```text
+  session      one episode: build the body, load extensions, run, score, record
+     │
+  core         agent loop, events, hooks, control channel           knows no robots
+     │    ╲
+  providers   extensions                                             knows no specific robot
+  Claude,     pointing tools, run_code, safety gate, recorder
+  OpenAI-          │
+  compatible     body          observe, move, rotate, grip, stop     knows no models
+                   │
+            MuJoCo tabletop  (next: LIBERO, real arms)
+```
+
+- **Append-only history.** Nothing already sent to the model is edited. Old pictures are trimmed only by the provider's own mechanism (`--keep-images N`).
+- **Hooks, not forks.** An extension can add tools and prompt text, refuse or rewrite a call before it runs, change a result after it runs, or watch the event stream.
+- **Bodies are one small interface.** Adding a robot means implementing `info`, `observe`, `move`, `rotate`, `grip`, `stop` and `reset`. Nothing above that layer changes.
+
+Design notes: [docs/design.md](docs/design.md) (goals and scope) and [docs/core-design.md](docs/core-design.md) (internals). The dashboard follows [DESIGN.md](DESIGN.md).
+
+## Results so far
+
+Single runs on the MuJoCo tabletop, not success rates. Every run below succeeded by the simulator's ground truth.
+
+| Task | Model | How it acted | Turns | Time |
+|---|---|---|---|---|
+| `lift_block` | Claude Opus 5.5 | tools | 4 | 13 s |
+| `mug_to_coaster` | Claude Opus 5.5 | tools and programs | 6 | 23 s |
+| `stack_block_on_mug` | Claude Opus 5.5 | tools | 6 | 23 s |
+| `stack_block_on_mug` | Claude Opus 5.5 | programs only | 5 | 18 s |
+| `mug_to_coaster` | Claude Sonnet 5.5 | tools | 7 | 26 s |
+| `mug_to_coaster` | GPT-6.1 Sol | tools | 9 | 29 s |
+
+## Project layout
+
+```text
+rocode/
+  core/        loop, events, hooks, control channel, messages, tool contract
+  providers/   anthropic.py, openai_compat.py, scripted.py
+  body/        base.py (the body contract), mujoco_tabletop.py
+  ext/         pointing.py, code.py (run_code), safety.py, recorder.py
+  view/        the dashboard: episodes.py, server.py, static/
+  session.py   tasks.py   cli.py   demo.py
+tests/         harness, provider and dashboard tests (no API key needed)
+docs/          design notes and images
+```
+
+## Status and roadmap
+
+openRocode is **alpha**. It works today on one MuJoCo tabletop with a floating gripper: the core, both providers, pointing tools, `run_code`, operator controls, recording, replay and the dashboard.
+
+Known limits:
+
+- No arm kinematics yet: the gripper floats, so reachability and joint limits are not modelled.
+- `run_code` runs in a separate interpreter with call and time budgets, but it is not a security sandbox.
+- No batch evaluation yet; one `rocode run` is one episode.
+
+Next:
+
+1. Batch evaluation across tasks, seeds and models.
+2. A second body (LIBERO) to prove the body contract.
+3. A Python SDK, and an MCP server so Claude Code, pi and other agents can drive a robot directly.
+4. A simulated arm with real kinematics, then a first real-robot adapter.
+5. A hard real-time safety loop beside physical robots.
+6. Trained policies (VLAs) as tools.
+
+## Contributing
+
+Issues and pull requests are welcome. Run `pytest` before sending a change; tests need no API key. New robots belong in `rocode/body/`, new capabilities in `rocode/ext/`. Please keep the core small.
+
+## License
+
+[Apache-2.0](LICENSE).
