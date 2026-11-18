@@ -1,0 +1,7 @@
+name = "home_arm"
+description = "L1 direct primitive: smoothly retract the manipulator to its neutral safe staging pose."
+kind = "direct_primitive"
+rate_hz = 200
+heartbeat_timeout_ms = 50
+timeout_sec = 5.0
+max_retries = 0

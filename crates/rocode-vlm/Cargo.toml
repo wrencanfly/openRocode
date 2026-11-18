@@ -8,3 +8,4 @@ license.workspace = true
 rocode-proto.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+ureq = { version = "3.5.2", features = ["json"] }

@@ -10,8 +10,12 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-rocode-proto.workspace = true
-rocode-safety.workspace = true
+crossterm = "0.29.0"
+ratatui = "0.30.2"
 rocode-adapters.workspace = true
 rocode-core.workspace = true
+rocode-proto.workspace = true
 rocode-recorder.workspace = true
+rocode-safety.workspace = true
+rocode-vlm.workspace = true
+serde_json.workspace = true

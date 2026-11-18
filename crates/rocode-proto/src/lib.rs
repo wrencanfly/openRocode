@@ -12,30 +12,49 @@ pub struct FrameRef {
     pub slot_id: u32,
 }
 
-/// Proprioceptive robot snapshot sampled at S0 frequency.
+/// Grounded object tracked in the workspace frame for spatial context distillation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SceneObject {
+    pub id: String,
+    pub label: String,
+    pub xyz_m: [f64; 3],
+    pub graspable: bool,
+    pub held: bool,
+}
+
+/// Proprioceptive & spatial robot snapshot sampled at S0 frequency.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RobotState {
     pub timestamp_ns: u64,
     pub joint_positions: Vec<f64>,
     pub joint_velocities: Vec<f64>,
     pub joint_efforts: Vec<f64>,
+    pub ee_xyz_m: [f64; 3],
+    pub ee_rpy_rad: [f64; 3],
+    pub ee_contact_force_n: f64,
     pub gripper_open_ratio: f64,
+    pub gripper_contact_detected: bool,
+    pub held_object_id: Option<String>,
+    pub scene_objects: Vec<SceneObject>,
     pub frames: Vec<FrameRef>,
 }
 
-/// Target joint command or action-chunk step emitted by S1 and filtered by S0.
+/// Target command emitted by S1 (or Teleop) and deterministically filtered by S0.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JointCommand {
     pub timestamp_ns: u64,
     pub target_positions: Vec<f64>,
+    pub target_ee_xyz_m: Option<[f64; 3]>,
     pub gripper_open_ratio: f64,
 }
 
 /// Deterministic safety bounds enforced at S0 before any command reaches hardware.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SafetyEnvelope {
-    /// Maximum allowed position jump (radians/meters) in a single S0 control tick.
+    /// Maximum allowed joint jump (radians) in a single S0 control tick.
     pub max_step_delta: f64,
+    /// Maximum allowed task-space EE jump (meters) in a single S0 control tick.
+    pub max_ee_step_m: f64,
     /// Maximum joint effort magnitude before triggering SafeHold.
     pub max_effort: f64,
     /// Maximum allowed silence (ms) from active S1 skill before Watchdog triggers SafeHold.
@@ -46,6 +65,7 @@ impl Default for SafetyEnvelope {
     fn default() -> Self {
         Self {
             max_step_delta: 0.05,
+            max_ee_step_m: 0.004,
             max_effort: 40.0,
             heartbeat_timeout_ms: 80,
         }
@@ -71,6 +91,14 @@ pub struct SkillPreconditions {
     pub max_base_distance_m: Option<f64>,
 }
 
+/// Optional shell command configuration for external L3 policy workers.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PolicyWorkerConfig {
+    pub program: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 /// Machine-readable skill contract loaded from `SKILL.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SkillSpec {
@@ -83,6 +111,8 @@ pub struct SkillSpec {
     pub max_retries: u32,
     #[serde(default)]
     pub preconditions: SkillPreconditions,
+    #[serde(default)]
+    pub worker: Option<PolicyWorkerConfig>,
 }
 
 impl SkillSpec {
@@ -91,11 +121,20 @@ impl SkillSpec {
     }
 }
 
-/// Structured failure codes surfaced from S0/S1 back to the S2 planner.
+/// Structured skill call emitted by the System 2 LLM driver.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SkillCall {
+    pub thought: String,
+    pub skill_name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// Structured failure codes surfaced from S0/S1 back to the S2 LLM driver.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureCode {
     PreconditionRefused,
+    InvalidArguments,
     HeartbeatTimeout,
     SafetyEnvelopeViolation,
     GraspSlip,
@@ -112,4 +151,45 @@ pub struct FailureTrace {
     pub message: String,
     pub window_frames: Vec<FrameRef>,
     pub final_state: RobotState,
+}
+
+/// Final outcome of executing a single skill invocation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SkillOutcome {
+    Completed {
+        summary: String,
+        ticks_elapsed: u64,
+        final_state: RobotState,
+    },
+    Failed(FailureTrace),
+}
+
+/// Wire request sent from Rust S1 Supervisor to an isolated L3 Python Policy Worker over UDS.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkerRequest {
+    Init {
+        skill_name: String,
+        arguments: serde_json::Value,
+    },
+    Step {
+        state: RobotState,
+    },
+    Shutdown,
+}
+
+/// Wire response returned by an L3 Python Policy Worker on each step.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum WorkerResponse {
+    Ready,
+    Command {
+        command: JointCommand,
+    },
+    Completed {
+        summary: String,
+    },
+    Failed {
+        reason: String,
+    },
 }
