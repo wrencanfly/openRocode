@@ -1,8 +1,0 @@
-[package]
-name = "rocode-adapters"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-rocode-proto.workspace = true
