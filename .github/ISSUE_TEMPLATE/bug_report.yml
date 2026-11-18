@@ -1,0 +1,26 @@
+name: Bug report
+description: Something in the harness, a tool, a provider or the dashboard is wrong.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+      placeholder: |
+        rocode run mug_to_coaster --provider openai --model ...
+        Expected the gripper to stop on contact; it pushed the mug off the table.
+    validations:
+      required: true
+  - type: textarea
+    id: episode
+    attributes:
+      label: Episode files
+      description: If a run went wrong, attach episode.jsonl and result.json from its folder under runs/. Check them before sharing.
+  - type: input
+    id: version
+    attributes:
+      label: Environment
+      placeholder: macOS 26, Python 3.12, commit abc1234
+    validations:
+      required: true

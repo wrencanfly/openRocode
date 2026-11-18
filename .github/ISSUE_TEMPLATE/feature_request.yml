@@ -1,0 +1,22 @@
+name: Idea or request
+description: A new robot, simulator, task, provider or feature.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: The problem or use case, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: How might it fit?
+      description: Which part it touches (a body, a task, a provider, an extension, the dashboard), if you know.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Would you like to build it?
+      options:
+        - label: I'd like to send a pull request for this.
