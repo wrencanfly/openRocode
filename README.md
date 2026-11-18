@@ -171,18 +171,9 @@ print(r.holding, r.opening_cm, r.height_cm, r.stop)
 
 ## How it works
 
-```text
-  session      one episode: build the body, load extensions, run, score, record
-     │
-  core         agent loop, events, hooks, control channel           knows no robots
-     │    ╲
-  providers   extensions                                             knows no specific robot
-  Claude,     pointing tools, run_code, safety gate, recorder
-  OpenAI-          │
-  compatible     body          observe, move, rotate, grip, stop     knows no models
-                   │
-            MuJoCo tabletop  (next: LIBERO, real arms)
-```
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="How openRocode works. The model receives annotated pictures and replies with clicks and programs; only pixels, centimetres and view directions cross between them, never world coordinates. Inside the harness, providers feed the agent loop, and every call passes hooks for argument checks, the safety gate and emergency stop. run_code sends its robot calls back through the same hooks to the pointing tools, which turn a pixel and depth into a 3D target and move the body. The recorder writes every event to runs/ for the dashboard, and an operator can say, pause or stop." width="100%">
+</p>
 
 - **Append-only history.** Nothing already sent to the model is edited. Old pictures are trimmed only by the provider's own mechanism (`--keep-images N`).
 - **Hooks, not forks.** An extension can add tools and prompt text, refuse or rewrite a call before it runs, change a result after it runs, or watch the event stream.
