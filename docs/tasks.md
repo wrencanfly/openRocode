@@ -44,6 +44,8 @@ success = "on(red_block, tray)"
 
 A file with no `[[object]]` uses the default scene: a red `mug`, a blue `block` and a yellow `coaster`.
 
+A top-level `robot = "panda"` (or `aloha`, `leap`; default `gripper`) sets who works at the table. See [robots-and-environments.md](robots-and-environments.md); `examples/tasks/aloha_bimanual.toml` and `leap_hand.toml` are written for those robots.
+
 Every key is checked when the file loads. A misspelt key, an object that does not fit on the table or a success check that names a missing object stops the run before any model is called, with the file and the problem in the message.
 
 ## Objects
@@ -71,8 +73,9 @@ The table top spans x from -45 to 45 cm and y from -35 to 35 cm; the gripper rea
 | Predicate | True when |
 |---|---|
 | `on(a, b)` | `a` rests on `b`: its centre is over `b`'s footprint, above `b`'s top and lower than `b`'s top plus `a`'s height, and the gripper is not holding it. `b` may be `table`. |
-| `held(a)` | The gripper is holding `a`. |
-| `hand_empty()` | The gripper is holding nothing. |
+| `held(a)` | A hand is holding `a`. |
+| `hand_empty()` | No hand is holding anything. |
+| `env_success()` | A benchmark environment (`robosuite:…`, `metaworld:…`) reports its own task as solved. |
 | `upright(a)`, `upright(a, deg)` | `a`'s up axis leans at most `deg` degrees (default 15) from vertical. |
 
 | Measurement | Value |

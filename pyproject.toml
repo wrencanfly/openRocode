@@ -18,6 +18,8 @@ dependencies = []
 [project.optional-dependencies]
 sim = ["mujoco>=3.2", "numpy>=1.26", "pillow>=10"]
 robots = ["robot_descriptions>=1.12"]           # Panda, ALOHA and LEAP models from MuJoCo Menagerie
+robosuite = ["robosuite>=1.5", "mujoco>=3.2,<3.4"]   # robosuite 1.5 does not run on MuJoCo 3.4 or later yet
+metaworld = ["metaworld>=3.0", "gymnasium>=1.0", "mujoco>=3.2,<3.4"]
 agent = ["anthropic>=0.70"]
 openai = ["openai>=1.0"]
 dev = ["pytest>=8"]

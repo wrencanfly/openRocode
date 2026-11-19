@@ -287,12 +287,15 @@ class Pointing(Extension):
     name = "pointing"
 
     def __init__(self, cameras: tuple[str, ...], expose_motion: bool = True, arms: tuple[str, ...] = ("hand",),
-                 robot: str = ""):
+                 robot: str = "", turns: bool = True):
         self.state = PointingState(cameras, tuple(arms))
-        motion = [MoveTo(self.state), Lower(self.state), Nudge(self.state), Turn(self.state), Grip(self.state)]
+        motion = [MoveTo(self.state), Lower(self.state), Nudge(self.state), *([Turn(self.state)] if turns else []),
+                  Grip(self.state)]
         self.tools = [Look(self.state), *(motion if expose_motion else []), Done(self.state)]
         self.internal_tools = [] if expose_motion else motion
         prompt = PROMPT if expose_motion else PROMPT.split(" A typical grasp")[0]
+        if not turns:
+            prompt = prompt.replace(" turn so the fingers close across the object's narrow side,", "")
         if robot:
             prompt = f"You control {robot}.\n{prompt}"
         if self.state.multi:

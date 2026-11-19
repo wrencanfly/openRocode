@@ -53,7 +53,7 @@ Every line of `episode.jsonl` is an object with a `type` naming one of the event
 The first event.
 
 - `task`: the instruction given to the model, in plain language.
-- `config`: how the episode was set up. Always `provider`, `model`, `effort`, `tools` (names the model may call directly) and `budget` (`max_steps`, `max_turns`, `max_seconds`). Sessions also add `task_id`, `body`, `policy` (`tools`, `code` or `both`), `seed` (null for the default layout), `batch` (the `rocode bench` batch id, or null) and `task_spec`: the whole task as it was run, with `id`, `instruction`, `success` (the success expression, `python:<function>`, or null for an ungraded task), `source` (`builtin`, the task file's path, or `inline` for an instruction typed on the command line) and `scene` (`objects`, each as written in a task file, in centimetres; see [tasks.md](tasks.md)).
+- `config`: how the episode was set up. Always `provider`, `model`, `effort`, `tools` (names the model may call directly) and `budget` (`max_steps`, `max_turns`, `max_seconds`). Sessions also add `task_id`, `body`, `policy` (`tools`, `code` or `both`), `seed` (null for the default layout), `batch` (the `rocode bench` batch id, or null) and `task_spec`: the whole task as it was run, with `id`, `instruction`, `success` (the success expression, `python:<function>`, or null for an ungraded task), `source` (`builtin`, the task file's path, `inline` for an instruction typed on the command line, or the environment's name) and either `scene` (`robot` and `objects`, each object as written in a task file, in centimetres; see [tasks.md](tasks.md)) or, for a benchmark environment's task, `env` (e.g. `robosuite:lift`; see [robots-and-environments.md](robots-and-environments.md)).
 - `version`: the trace format version.
 
 ### TurnStart
@@ -92,9 +92,9 @@ A tool call finished. Every `ToolStart` has exactly one `ToolEnd`, even when the
   - `executed`: `none`, `partial`, `full` or `unknown`. Never guessed.
   - `stop_reason`: `reached`, `contact`, `blocked`, `refused`, `cancelled` or `fault`.
   - `stop_confirmed`: whether the robot confirmed it stopped.
-  - `peak_force_n`, `detail`, `extra`.
+  - `peak_force_n`, `detail`, `extra`. When a motion stops on contact, `extra.touched` names what the hand pressed on. It is for people reading the trace; the model's text never contains it.
 - `duration_s`: wall-clock seconds.
-- `data`: structured readings the model also saw, flat and JSON-typed. Pointing tools report `observation`, `height_cm` (fingertips above the table), `opening_cm`, `holding`, `contact_n` and `stop`; `run_code` reports `observation`, `calls` and `exit_code`; `done` reports `success` and `summary`.
+- `data`: structured readings the model also saw, flat and JSON-typed. Pointing tools report `observation`, `height_cm` (fingertips above the table), `opening_cm`, `holding`, `contact_n` and `stop` for the arm that moved, and, on bodies with more than one arm, `arms` with the same readings for each arm by name; `run_code` reports `observation`, `calls` and `exit_code`; `done` reports `success` and `summary`.
 
 ### ToolDenied
 
@@ -153,7 +153,7 @@ Written by the session after the episode, from the simulator's ground truth:
 - `check`: the success expression, `python:<function>`, or null.
 - `clauses`: for an expression, one entry per part joined by a top-level `and`: `expr`, `ok`, and `values`, every predicate and measurement it read (`{"height_cm(block)": 6.4}`).
 - `claimed`: what the model said in `done` (`true`, `false`, or null if it never called `done`).
-- `ground_truth`: the simulator's final state, in metres in the world frame (for MuJoCo: `objects`, every object's centre; `tilt_deg`, how far each loose object leans; `held`; `tcp`).
+- `ground_truth`: the simulator's final state, in metres in the world frame (for MuJoCo: `objects`, every object's centre; `tilt_deg`, how far each loose object leans; `held`; `tcp`; with more than one arm, `held_by` for each arm; for a benchmark environment, `success`, its own verdict).
 - `config`: the full session config.
 
 ## Batches

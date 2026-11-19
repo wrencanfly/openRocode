@@ -9,7 +9,8 @@ them, so every robot honours the Body contract identically.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from types import MappingProxyType
 
 import mujoco
 import numpy as np
@@ -231,6 +232,12 @@ class MujocoBody:
     arms: dict[str, ArmDriver]
     _info: BodyInfo
     _static_geoms: set[int]
+    substeps: int = 1          # physics steps per `_step`: a benchmark's env.step may advance several
+    camera_alias: Mapping[str, str] = MappingProxyType({})   # name shown -> the camera's name in the model
+
+    def _ticks(self, physics_steps: int) -> int:
+        """How many `_step` calls cover this many physics steps."""
+        return physics_steps if self.substeps == 1 else max(1, round(physics_steps / self.substeps))
 
     def _init_render(self, width: int, height: int) -> None:
         self.width, self.height = width, height
@@ -257,8 +264,9 @@ class MujocoBody:
     def observe(self) -> Observation:
         rgb, depth, cams = {}, {}, {}
         for name in self._info.cameras:
-            self._rgb.update_scene(self.data, camera=name)
-            self._depth.update_scene(self.data, camera=name)
+            internal = self.camera_alias.get(name, name)
+            self._rgb.update_scene(self.data, camera=internal)
+            self._depth.update_scene(self.data, camera=internal)
             rgb[name] = self._rgb.render().copy()
             depth[name] = self._depth.render().copy()
             cams[name] = self._camera(name)
@@ -275,7 +283,7 @@ class MujocoBody:
         start = a.commanded_tcp()
         dist = float(np.linalg.norm(goal - start))
         direction = (goal - start) / dist if dist > 1e-9 else np.zeros(3)
-        dt = self.model.opt.timestep
+        dt = self.model.opt.timestep * self.substeps
         n = max(1, int(np.ceil(dist / (guard.speed_mps * dt))))
         baseline = self._external_force(a)  # tare, like a wrist F/T sensor
         peak = 0.0
@@ -302,7 +310,9 @@ class MujocoBody:
 
     def rotate(self, yaw: float, cancel: CancelToken, arm: str | None = None) -> Receipt:
         a = self._arm(arm)
-        start, n = a.yaw, 250
+        if not a.info.turns:
+            return Receipt("none", "refused", True, detail="this hand's wrist does not turn")
+        start, n = a.yaw, self._ticks(250)
         for k in range(1, n + 1):
             if cancel.cancelled:
                 self.stop()
@@ -315,7 +325,7 @@ class MujocoBody:
     def grip(self, opening_m: float, cancel: CancelToken, arm: str | None = None) -> Receipt:
         a = self._arm(arm)
         a.set_opening(opening_m)
-        for _ in range(a.grip_steps):
+        for _ in range(self._ticks(a.grip_steps)):
             if cancel.cancelled:
                 return Receipt("partial", "cancelled", True, detail=cancel.reason)
             self._step()
@@ -344,11 +354,11 @@ class MujocoBody:
         mujoco.mj_step(self.model, self.data)
 
     def _settle(self, steps: int) -> None:
-        for _ in range(steps):
+        for _ in range(self._ticks(steps)):
             self._step()
 
     def _camera(self, name: str) -> CameraModel:
-        cam = self.model.camera(name)
+        cam = self.model.camera(self.camera_alias.get(name, name))
         fovy = np.deg2rad(self.model.cam_fovy[cam.id])
         return CameraModel(name, self.width, self.height, (self.height / 2) / np.tan(fovy / 2),
                            self.data.cam_xpos[cam.id].copy(), self.data.cam_xmat[cam.id].reshape(3, 3).copy())
@@ -421,6 +431,26 @@ class MujocoBody:
 
     def _held_all(self) -> dict[str, str | None]:
         return {name: self._held_body(a) for name, a in self.arms.items()}
+
+
+def place_camera(model: mujoco.MjModel, name: str, pos, target, fovy: float | None = None) -> None:
+    """Move an existing fixed camera of a compiled model to look from pos at target, image up toward world +z."""
+    cam = model.camera(name).id
+    f = np.asarray(target, float) - np.asarray(pos, float)
+    f /= np.linalg.norm(f)
+    right = np.cross(f, [0.0, 0.0, 1.0])
+    right /= np.linalg.norm(right)
+    up = np.cross(right, f)
+    rot = np.column_stack([right, up, -f])            # camera x right, y up, z backward
+    world_from_parent = model.body(model.cam_bodyid[cam]).id
+    if world_from_parent != 0:
+        raise ValueError(f"camera {name} is attached to a moving body")
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, rot.flatten())
+    model.cam_pos[cam], model.cam_quat[cam] = pos, q
+    model.cam_mode[cam] = mujoco.mjtCamLight.mjCAMLIGHT_FIXED
+    if fovy is not None:
+        model.cam_fovy[cam] = fovy
 
 
 def geoms_of_bodies(model: mujoco.MjModel, bodies: Iterable[str], colliding_only: bool = True) -> set[int]:

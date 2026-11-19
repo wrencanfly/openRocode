@@ -124,6 +124,7 @@ class ArmInfo:
     name: str
     hand: Literal["gripper", "hand"] = "gripper"   # a parallel gripper, or a multi-fingered hand
     max_opening_m: float = 0.08
+    turns: bool = True                             # whether the wrist can rotate about vertical
 
 
 @dataclass(frozen=True)

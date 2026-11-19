@@ -79,7 +79,8 @@ def run_session(cfg: SessionConfig, provider: Provider | None = None, control: C
             body.close()
     info = body.info()
     cameras = info.cameras
-    pointing = Pointing(cameras, expose_motion=cfg.policy != "code", arms=info.arm_names, robot=info.robot)
+    pointing = Pointing(cameras, expose_motion=cfg.policy != "code", arms=info.arm_names, robot=info.robot,
+                        turns=any(a.turns for a in info.arms))
     extensions: list[Extension] = [SafetyGate(), pointing]
     if cfg.policy in ("code", "both"):
         extensions.append(CodeAsPolicy(cameras, arms=info.arm_names))
