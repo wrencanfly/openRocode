@@ -42,6 +42,7 @@ class SessionConfig:
     out_dir: Path | None = None
     batch: str | None = None               # set by `rocode bench` so the dashboard can compare episodes
     reasoning: bool = False                # openai provider: send reasoning_effort, ask for reasoning summaries
+    depth: bool = True                     # False: RGB-only cameras; the model clicks twice for points in the air
 
 
 @dataclass
@@ -72,7 +73,7 @@ def run_session(cfg: SessionConfig, provider: Provider | None = None, control: C
     """Run one episode. A body passed in stays open for the caller; one created here is closed here."""
     task = get_task(cfg.task)
     if body is None:
-        body = task.make_body(seed=cfg.seed)
+        body = task.make_body(seed=cfg.seed, depth=cfg.depth)
         try:
             return run_session(cfg, provider, control, subscribers, extra_extensions, body)
         finally:
@@ -80,10 +81,10 @@ def run_session(cfg: SessionConfig, provider: Provider | None = None, control: C
     info = body.info()
     cameras = info.cameras
     pointing = Pointing(cameras, expose_motion=cfg.policy != "code", arms=info.arm_names, robot=info.robot,
-                        turns=any(a.turns for a in info.arms))
+                        turns=any(a.turns for a in info.arms), depth=info.has_depth)
     extensions: list[Extension] = [SafetyGate(), pointing]
     if cfg.policy in ("code", "both"):
-        extensions.append(CodeAsPolicy(cameras, arms=info.arm_names))
+        extensions.append(CodeAsPolicy(cameras, arms=info.arm_names, depth=info.has_depth))
     extensions += list(extra_extensions)
     recorder = None
     if cfg.out_dir is not None:
@@ -102,7 +103,7 @@ def run_session(cfg: SessionConfig, provider: Provider | None = None, control: C
 
     # The first look goes through the normal tool path so recordings and viewers see it like any other step.
     first_look = lambda: agent.run_tool(ToolCall("initial_look", "look", {})).content  # noqa: E731
-    meta = {"task_id": task.id, "body": body.info().name, "policy": cfg.policy, "seed": cfg.seed,
+    meta = {"task_id": task.id, "body": info.name, "policy": cfg.policy, "seed": cfg.seed, "depth": info.has_depth,
             "batch": cfg.batch, "task_spec": task.spec()}
     outcome = agent.run(task.instruction, first_look, meta)
     truth = body.ground_truth()

@@ -61,9 +61,10 @@ class _Robot:
     def look(self):
         return self._call("look")
 
-    def move_to(self, camera, x, y, hover_cm=8, observation=None, arm=None):
+    def move_to(self, camera, x, y, hover_cm=8, observation=None, arm=None, camera2=None, x2=None, y2=None):
         return self._call("move_to", camera=camera, x=int(x), y=int(y), hover_cm=hover_cm, observation=observation,
-                          arm=arm)
+                          arm=arm, camera2=camera2, x2=None if x2 is None else int(x2),
+                          y2=None if y2 is None else int(y2))
 
     def lower(self, cm=None, arm=None):
         return self._call("lower", cm=cm, arm=arm)
@@ -205,9 +206,12 @@ class RunCode:
 class CodeAsPolicy(Extension):
     name = "code"
 
-    def __init__(self, cameras: tuple[str, ...], arms: tuple[str, ...] = ("hand",), **limits):
+    def __init__(self, cameras: tuple[str, ...], arms: tuple[str, ...] = ("hand",), depth: bool = True, **limits):
         self.tools = [RunCode(cameras, **limits)]
         self.prompt = PROMPT
+        if not depth:
+            self.prompt += ("\nNo depth: robot.move_to(camera, x, y, ..., camera2=..., x2=..., y2=...) places a point "
+                            "above the table from two clicks of the same spot; one click lands on the table.")
         if len(arms) > 1:
             self.prompt += (f"\nEvery motion call takes arm= one of {', '.join(repr(a) for a in arms)}, e.g. "
                             f"robot.grip(\"close\", arm={arms[0]!r}). Results describe the arm that moved and, under "

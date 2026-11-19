@@ -125,7 +125,8 @@ class MujocoTabletop(MujocoBody):
     """Implements `rocode.body.base.Body`: a table, the objects of a Scene, two cameras and one of the robots in
     rocode/body/robots.py (the scene's `robot`, a floating gripper by default)."""
 
-    def __init__(self, width: int = 640, height: int = 480, seed: int | None = None, scene: Scene | None = None):
+    def __init__(self, width: int = 640, height: int = 480, seed: int | None = None, scene: Scene | None = None,
+                 depth: bool = True):
         self.scene = scene or DEFAULT_SCENE
         self.robot = robots.get(self.scene.robot)
         if self.robot.name == "gripper":
@@ -133,14 +134,14 @@ class MujocoTabletop(MujocoBody):
         else:
             self.model = robots.compile_with_robot(scene_xml(self.scene, robot=False), self.robot.name)
         self.data = mujoco.MjData(self.model)
-        self._init_render(width, height)
+        self._init_render(width, height, depth)
         self.arms = robots.make_arms(self.robot.name, self.model, self.data)
         self._static_geoms = {self.model.geom(n).id for n in ("floor", "table", *(o.name for o in self.scene.fixed))}
         self._static_geoms |= {g for g in range(self.model.ngeom) if self.model.geom(g).name.startswith("pedestal")}
         self._info = BodyInfo(
             name="mujoco-tabletop" if self.robot.name == "gripper" else f"mujoco-tabletop-{self.robot.name}",
             cameras=tuple(self.robot.cameras) or ("front", "side"),
-            has_depth=True,
+            has_depth=depth,
             workspace=self.robot.workspace,
             max_opening_m=self.robot.arms[0].max_opening_m,
             arms=self.robot.arms,

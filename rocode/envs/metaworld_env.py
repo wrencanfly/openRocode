@@ -38,8 +38,9 @@ CAMERAS = {   # shown name -> (model camera to re-aim, position, look-at point, 
 }
 
 
-def make_body(task: EnvTask, seed: int | None = None, width: int = 640, height: int = 480):
-    return _body_class()(task.name, seed, width, height)
+def make_body(task: EnvTask, seed: int | None = None, width: int = 640, height: int = 480,
+              depth: bool = True):
+    return _body_class()(task.name, seed, width, height, depth)
 
 
 def _body_class():
@@ -82,11 +83,11 @@ def _body_class():
     class MetaWorldBody(MujocoBody):
         """Implements `rocode.body.base.Body` on a Meta-World task."""
 
-        def __init__(self, env_name: str, seed: int | None, width: int, height: int):
+        def __init__(self, env_name: str, seed: int | None, width: int, height: int, depth: bool = True):
             import gymnasium as gym
             import metaworld  # noqa: F401  (registers the Meta-World environments)
 
-            self.env_name, self._size = env_name, (width, height)
+            self.env_name, self._size, self._depth_on = env_name, (width, height), depth
             seed = 0 if seed is None else seed
             # Meta-World only repeats a layout for the first reset of an env made with that seed
             self.env = gym.make("Meta-World/MT1", env_name=env_name, seed=seed)
@@ -108,14 +109,14 @@ def _body_class():
             self._info = BodyInfo(
                 name=f"metaworld-{env_name}",
                 cameras=tuple(CAMERAS),
-                has_depth=True,
+                has_depth=depth,
                 workspace=Workspace((lo[0], lo[1], 0.0), (hi[0], hi[1], hi[2]), 0.0),
                 max_opening_m=arm.max_opening_m,
                 arms=(arm,),
                 robot=f"a Sawyer arm whose gripper always points straight down and cannot turn (Meta-World "
                       f"{env_name})",
             )
-            self._init_render(width, height)
+            self._init_render(width, height, depth)
             self._settle_open()
 
         def _settle_open(self):
@@ -127,7 +128,7 @@ def _body_class():
         def reset(self, seed: int | None = None) -> None:
             """A fresh environment made with this seed: Meta-World's later resets do not repeat layouts."""
             self.close()
-            self.__init__(self.env_name, seed, *self._size)
+            self.__init__(self.env_name, seed, *self._size, self._depth_on)
 
         def ground_truth(self) -> dict:
             u = self.env.unwrapped
