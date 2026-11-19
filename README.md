@@ -16,6 +16,7 @@
 </p>
 
 <p align="center">
+  <a href="#design-principles">Design principles</a>&nbsp;&nbsp;&nbsp;
   <a href="#quick-start">Quick start</a>&nbsp;&nbsp;&nbsp;
   <a href="#features">Features</a>&nbsp;&nbsp;&nbsp;
   <a href="#the-dashboard">Dashboard</a>&nbsp;&nbsp;&nbsp;
@@ -31,6 +32,34 @@
 openRocode is an open agent harness that turns robot control into **3D computer use**. The model looks at camera pictures, clicks where the gripper should go, nudges in directions it can see, or writes a short Python program for the parts that need loops and checks. The harness does the geometry, guards every motion, lets a person step in at any moment, and records everything.
 
 **The model never sees or writes a world coordinate.** Depth, calibration and frames stay inside the harness. Tools speak pixels, centimetres and "left in the front camera".
+
+## Design principles
+
+Five decisions shape openRocode. Each one costs something, and the cost is part of the decision.
+
+1. **The model points; the harness does the geometry.** Tools take a pixel in a labelled picture, or a direction as seen in one camera, in centimetres. Depth, calibration, frames and inverse kinematics never reach the model, and no tool returns a world coordinate. The model works the way a person at a screen would, so what it is tested on is seeing and deciding, not arithmetic on poses. *The cost:* a click needs depth, simulated or from an RGB-D camera.
+2. **Our own small agent loop.** The core (loop, hooks, events, operator channel) is about 700 lines and talks to model APIs directly: Claude, and any OpenAI-compatible endpoint. Every message, call, reasoning summary and token passes through it, so all of it can be guarded, interrupted and recorded. *The cost:* no coding-agent CLI comes along for free.
+3. **Tools and programs in the same run, chosen by the model.** At every step the model can make one call or write a `run_code` program. A program's robot calls go through the same validation, safety gate and emergency stop as direct calls.
+4. **Evaluation is part of the harness, not an afterthought.** A task is data: a scene, an instruction, and a success check the model never sees, judged clause by clause. Every episode is a versioned trace that carries the whole task. The same seed gives the same table, and `rocode bench` with the Compare page shows which model failed which condition.
+5. **Small enough to read, light enough for a laptop.** About 5,300 lines of Python, `pip install`, no dedicated GPU, macOS or Linux. Benchmarks and robot models are optional extras.
+
+### How this differs from uni-robot-agent
+
+[uni-robot-agent](https://github.com/Open-RUA/uni-robot-agent) is the closest open project, and it makes different choices on purpose. From its documentation (November 2026):
+
+| | openRocode | uni-robot-agent |
+|---|---|---|
+| What the model sends to move the robot | A pixel in a picture, or a direction seen in one camera, in centimetres | An end-effector target position (metres) and orientation (quaternion); a tool can triangulate pixels from several calibrated views |
+| Calibration and geometry | Kept inside the harness | Given to the agent: camera intrinsics and extrinsics, robot descriptions |
+| Depth | Needed for clicks | Its paper's setting is RGB only; depth can be turned on |
+| Agent runtime | Its own loop over model APIs | Codex and Claude Code as runtimes (OpenCode and Gemini CLI experimental) |
+| Code as policy | Available in any run; the model picks per step | A run mode (`--interaction-mode code_as_policy`) using the agent's own shell |
+| Tasks and success | Your own tasks as data, checked per condition, plus robosuite and Meta-World tasks | Each benchmark's own tasks and outcomes |
+| Looking at runs | Versioned trace format, dashboard, `rocode bench` and the Compare page | Live monitor and replay of saved runs |
+| Coverage today | MuJoCo: four robots at the tabletop, robosuite, Meta-World | Eleven simulation integrations, two real robots, humanoid, legged and wheeled robots with trained action models |
+| Runs on | A laptop, no dedicated GPU | A Linux GPU host, per its quick start |
+
+If you need real robots, many benchmarks or a VLA in the loop today, uni-robot-agent covers more ground. openRocode is for when you want a model to work like a person at a screen, and to see exactly where and why each model fails.
 
 ## Quick start
 
