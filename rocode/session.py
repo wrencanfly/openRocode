@@ -12,7 +12,6 @@ from typing import Literal
 import numpy as np
 
 from .body.base import Body
-from .body.mujoco_tabletop import MujocoTabletop
 from .core.control import ControlChannel
 from .core.events import Event, EventBus
 from .core.extension import Extension
@@ -73,16 +72,17 @@ def run_session(cfg: SessionConfig, provider: Provider | None = None, control: C
     """Run one episode. A body passed in stays open for the caller; one created here is closed here."""
     task = get_task(cfg.task)
     if body is None:
-        body = MujocoTabletop(seed=cfg.seed, scene=task.scene)
+        body = task.make_body(seed=cfg.seed)
         try:
             return run_session(cfg, provider, control, subscribers, extra_extensions, body)
         finally:
             body.close()
-    cameras = body.info().cameras
-    pointing = Pointing(cameras, expose_motion=cfg.policy != "code")
+    info = body.info()
+    cameras = info.cameras
+    pointing = Pointing(cameras, expose_motion=cfg.policy != "code", arms=info.arm_names, robot=info.robot)
     extensions: list[Extension] = [SafetyGate(), pointing]
     if cfg.policy in ("code", "both"):
-        extensions.append(CodeAsPolicy(cameras))
+        extensions.append(CodeAsPolicy(cameras, arms=info.arm_names))
     extensions += list(extra_extensions)
     recorder = None
     if cfg.out_dir is not None:

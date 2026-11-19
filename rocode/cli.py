@@ -254,10 +254,11 @@ def preview_command(args, catalog: Catalog, ap: argparse.ArgumentParser) -> int:
         if args.task.endswith((".toml", ".py")):
             scene, _ = load_file(args.task)
             name = Path(args.task).stem
+            body = MujocoTabletop(seed=args.seed, scene=scene)
         else:
             task = catalog.resolve(args.task)
-            scene, name = task.scene, task.id
-        body = MujocoTabletop(seed=args.seed, scene=scene)
+            name = task.id
+            body = task.make_body(seed=args.seed)
     except ValueError as err:
         ap.error(str(err))
     try:

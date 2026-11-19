@@ -1,0 +1,61 @@
+# Two ViperX arms (ALOHA), one at each end of the table. Each arm reaches its own half of the table and
+# about 10 cm past the middle, so these tasks need both arms. The grippers open to 5.5 cm.
+robot = "aloha"
+
+[[object]]
+name = "tray"
+shape = "box"
+size_cm = [14, 10, 0.6]
+color = "white"
+at_cm = [0, -10]
+fixed = true
+
+[[object]]
+name = "mat"
+shape = "box"
+size_cm = [10, 10, 0.4]
+color = "gray"
+at_cm = [0, 10]
+fixed = true
+
+[[object]]
+name = "pad"
+shape = "box"
+size_cm = [10, 10, 0.6]
+color = "green"
+at_cm = [26, -6]
+fixed = true
+
+[[object]]
+name = "red_block"
+shape = "box"
+size_cm = 3.5
+color = "red"
+at_cm = [-24, 12]
+jitter_cm = [3, 3]
+
+[[object]]
+name = "blue_block"
+shape = "box"
+size_cm = 3.5
+color = "blue"
+at_cm = [24, 12]
+jitter_cm = [3, 3]
+
+[[object]]
+name = "yellow_block"
+shape = "box"
+size_cm = 3.5
+color = "yellow"
+at_cm = [-25, -8]
+jitter_cm = [3, 3]
+
+[[task]]
+id = "both_blocks_to_tray"
+instruction = "Put the red block and the blue block on the white tray."
+success = "on(red_block, tray) and on(blue_block, tray)"
+
+[[task]]
+id = "yellow_to_pad"
+instruction = "Move the yellow block onto the green pad at the far right end of the table."
+success = "on(yellow_block, pad) and hand_empty()"

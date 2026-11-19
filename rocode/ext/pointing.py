@@ -40,8 +40,20 @@ def _schema(props: dict, required: tuple = ()) -> dict:
 @dataclass
 class PointingState:
     cameras: tuple[str, ...]
+    arms: tuple[str, ...] = ("hand",)
     last_target: np.ndarray | None = None
-    yaw: float = 0.0
+    yaws: dict = field(default_factory=dict)
+
+    @property
+    def multi(self) -> bool:
+        return len(self.arms) > 1
+
+    def with_arm(self, props: dict, required: tuple = ()) -> tuple[dict, tuple]:
+        """Add the `arm` argument to a motion tool's schema when there is more than one arm."""
+        if not self.multi:
+            return props, required
+        return {**props, "arm": {"type": "string", "enum": list(self.arms), "description": "Which arm moves."}}, \
+            (*required, "arm")
 
 
 @dataclass
@@ -55,31 +67,47 @@ class _Tool:
     # -- shared helpers --------------------------------------------------------------------
 
     def report(self, ctx: ToolContext, message: str, receipt: Receipt | None = None,
-               ok: bool = True, extra: dict | None = None) -> ToolResult:
+               ok: bool = True, extra: dict | None = None, arm: str | None = None) -> ToolResult:
         stored = capture(ctx, self.state)
-        p = stored.observation.proprio
-        info = ctx.body.info()
-        closed = p.opening_cmd_m < 0.01
-        holding = closed and p.opening_m > EMPTY_GRIP_M
-        if holding:
-            grip = f"closed on something {p.opening_m * 100:.1f} cm wide"
-        elif closed:
-            grip = "closed, empty"
-        else:
-            grip = f"open {p.opening_m * 100:.1f} cm"
-        height = max(p.tcp_xyz[2] - info.workspace.table_z, 0) * 100
-        status = (f"Fingertips {height:.1f} cm above the table. Gripper {grip}. "
-                  f"Contact force {p.wrist_force_n:.1f} N. Pictures: {stored.id}.")
+        proprio = stored.observation.proprio
+        table_z = ctx.body.info().workspace.table_z
+        names = self.state.arms if self.state.multi else (None,)
+        lines, arms = [], {}
+        for name in names:
+            line, d = _arm_status(proprio.arm(name), table_z)
+            lines.append(f"{name.capitalize()} arm: {line}" if name else line)
+            arms[name] = d
+        status = " ".join(lines) + f" Pictures: {stored.id}."
         content = (Text(f"{message}\n{status}"), *(ImageRef(stored.id, c) for c in self.state.cameras))
-        data = {"observation": stored.id, "height_cm": round(height, 1), "opening_cm": round(p.opening_m * 100, 1),
-                "holding": holding, "contact_n": round(p.wrist_force_n, 1),
-                "stop": receipt.stop_reason if receipt else None, **(extra or {})}
+        acting = arms[arm if self.state.multi else None] if (arm or not self.state.multi) else {}
+        data = {"observation": stored.id, **acting, "stop": receipt.stop_reason if receipt else None, **(extra or {})}
+        if self.state.multi:
+            data["arms"] = arms
         return ToolResult(content, is_error=not ok, receipt=receipt, data=data)
+
+    def arm(self, args: dict) -> str | None:
+        return args.get("arm") if self.state.multi else None
+
+
+def _arm_status(p, table_z: float) -> tuple[str, dict]:
+    closed = p.opening_cmd_m < 0.01
+    holding = closed and p.opening_m > EMPTY_GRIP_M
+    if holding:
+        grip = f"closed on something {p.opening_m * 100:.1f} cm wide"
+    elif closed:
+        grip = "closed, empty"
+    else:
+        grip = f"open {p.opening_m * 100:.1f} cm"
+    height = max(p.tcp_xyz[2] - table_z, 0) * 100
+    line = f"Fingertips {height:.1f} cm above the table. Gripper {grip}. Contact force {p.wrist_force_n:.1f} N."
+    return line, {"height_cm": round(height, 1), "opening_cm": round(p.opening_m * 100, 1), "holding": holding,
+                  "contact_n": round(p.wrist_force_n, 1)}
 
 
 def capture(ctx: ToolContext, state: PointingState) -> StoredObservation:
     obs = ctx.body.observe()
-    views = {c: annotate(obs, c, state.last_target, ctx.observations.next_id()) for c in state.cameras}
+    oid = ctx.observations.next_id()
+    views = {c: annotate(obs, c, state.last_target, oid, state.arms if state.multi else ()) for c in state.cameras}
     return ctx.observations.put(obs, views)
 
 
@@ -108,14 +136,14 @@ class MoveTo(_Tool):
             "Move the gripper to hover above the point you click. Click the exact spot the fingertips should end "
             "up over, e.g. the centre of an object's top or a spot on the table. The arm rises, travels, and stops "
             "hover_cm above that surface point, so it does not hit what you clicked. It stops early on contact."),
-            _schema({
+            _schema(*state.with_arm({
                 "camera": {"type": "string", "enum": list(state.cameras)},
                 "x": {"type": "integer", "description": "Pixel column, 0 at the left edge."},
                 "y": {"type": "integer", "description": "Pixel row, 0 at the top edge."},
                 "hover_cm": {"type": "number", "minimum": 0, "maximum": 25, "default": 8},
                 "observation": {"type": "string", "description": "Which pictures you clicked on, e.g. o4. "
                                                                  "Defaults to the latest."},
-            }, ("camera", "x", "y")))
+            }, ("camera", "x", "y"))))
 
     def execute(self, args, ctx):
         stored = ctx.observations.get(args["observation"]) if "observation" in args else ctx.observations.latest()
@@ -123,27 +151,28 @@ class MoveTo(_Tool):
             return ToolResult.error(f"There are no pictures called {args.get('observation')}. Nothing moved.")
         surface = surface_point(stored, args["camera"], int(args["x"]), int(args["y"]),
                                 ctx.body.info().workspace.table_z)
+        arm = self.arm(args)
         if isinstance(surface, str):
-            return self.report(ctx, surface + " Nothing moved.", Receipt("none", "refused", True), ok=False)
+            return self.report(ctx, surface + " Nothing moved.", Receipt("none", "refused", True), ok=False, arm=arm)
         hover = args.get("hover_cm", 8) / 100
         goal = surface + [0, 0, hover]
         if not ctx.body.info().workspace.contains(goal):
             return self.report(ctx, "That point is outside the area the arm can reach. Nothing moved.",
-                               Receipt("none", "refused", True), ok=False)
+                               Receipt("none", "refused", True), ok=False, arm=arm)
         self.state.last_target = surface
-        start = ctx.body.observe().proprio.tcp_xyz
+        start = ctx.body.observe().proprio.arm(arm).tcp_xyz
         transit = min(max(start[2], goal[2]) + TRANSIT_CLEARANCE_M, ctx.body.info().workspace.hi[2])
         legs = [np.array([start[0], start[1], transit]), np.array([goal[0], goal[1], transit]), goal]
         receipt = None
         for i, leg in enumerate(legs):
-            receipt = ctx.body.move(leg, Guard(), ctx.cancel)
+            receipt = ctx.body.move(leg, Guard(), ctx.cancel, arm=arm)
             if receipt.stop_reason != "reached":
                 if i and receipt.executed == "none":
                     receipt = Receipt("partial", receipt.stop_reason, receipt.stop_confirmed, receipt.peak_force_n,
                                       receipt.detail)
                 break
         return self.report(ctx, _receipt_text(receipt, f"Hovering {hover * 100:g} cm above the point you clicked "
-                                                       f"in {stored.id}."), receipt)
+                                                       f"in {stored.id}."), receipt, arm=arm)
 
 
 class Lower(_Tool):
@@ -151,15 +180,16 @@ class Lower(_Tool):
         super().__init__(state, "lower", (
             "Lower the gripper straight down until it touches something, or by cm if given. Use it to come down "
             "around an object before closing, or to set a held object down."),
-            _schema({"cm": {"type": "number", "exclusiveMinimum": 0, "maximum": 30}}))
+            _schema(*state.with_arm({"cm": {"type": "number", "exclusiveMinimum": 0, "maximum": 30}})))
 
     def execute(self, args, ctx):
+        arm = self.arm(args)
         table = ctx.body.info().workspace.table_z
-        tcp = ctx.body.observe().proprio.tcp_xyz
+        tcp = ctx.body.observe().proprio.arm(arm).tcp_xyz
         floor = table + 0.004
         goal_z = floor if "cm" not in args else max(tcp[2] - args["cm"] / 100, floor)
-        receipt = ctx.body.move([tcp[0], tcp[1], goal_z], Guard(max_force_n=3.0, speed_mps=0.08), ctx.cancel)
-        dropped = (tcp[2] - ctx.body.observe().proprio.tcp_xyz[2]) * 100
+        receipt = ctx.body.move([tcp[0], tcp[1], goal_z], Guard(max_force_n=3.0, speed_mps=0.08), ctx.cancel, arm=arm)
+        dropped = (tcp[2] - ctx.body.observe().proprio.arm(arm).tcp_xyz[2]) * 100
         if receipt.stop_reason == "contact":
             msg = f"Lowered {dropped:.1f} cm and stopped on contact."
         elif receipt.stop_reason == "reached" and "cm" not in args:
@@ -169,7 +199,7 @@ class Lower(_Tool):
         # Reaching contact is what lower is for; report it as a completed motion.
         if receipt.stop_reason == "contact":
             receipt = Receipt(receipt.executed, "reached", receipt.stop_confirmed, receipt.peak_force_n, "contact")
-        return self.report(ctx, msg, receipt, extra={"touched": receipt.detail == "contact"})
+        return self.report(ctx, msg, receipt, extra={"touched": receipt.detail == "contact"}, arm=arm)
 
 
 class Nudge(_Tool):
@@ -178,22 +208,23 @@ class Nudge(_Tool):
             "Move the gripper a short distance in directions as seen in one camera's pictures: right_cm toward the "
             "right of that picture, away_cm away from that camera along the table, up_cm straight up. Negative "
             "values go the other way. Stops early on contact."),
-            _schema({
+            _schema(*state.with_arm({
                 "camera": {"type": "string", "enum": list(state.cameras)},
                 "right_cm": {"type": "number", "minimum": -20, "maximum": 20, "default": 0},
                 "away_cm": {"type": "number", "minimum": -20, "maximum": 20, "default": 0},
                 "up_cm": {"type": "number", "minimum": -20, "maximum": 20, "default": 0},
-            }, ("camera",)))
+            }, ("camera",))))
 
     def execute(self, args, ctx):
+        arm = self.arm(args)
         obs = ctx.body.observe()
         right, away = obs.cameras[args["camera"]].horizontal_axes()
         delta = (right * args.get("right_cm", 0) + away * args.get("away_cm", 0)
                  + np.array([0, 0, 1.0]) * args.get("up_cm", 0)) / 100
-        goal = obs.proprio.tcp_xyz + delta
+        goal = obs.proprio.arm(arm).tcp_xyz + delta
         goal[2] = max(goal[2], ctx.body.info().workspace.table_z + 0.004)
-        receipt = ctx.body.move(goal, Guard(speed_mps=0.10), ctx.cancel)
-        return self.report(ctx, _receipt_text(receipt, "Nudged."), receipt)
+        receipt = ctx.body.move(goal, Guard(speed_mps=0.10), ctx.cancel, arm=arm)
+        return self.report(ctx, _receipt_text(receipt, "Nudged."), receipt, arm=arm)
 
 
 class Turn(_Tool):
@@ -201,34 +232,41 @@ class Turn(_Tool):
         super().__init__(state, "turn", (
             "Rotate the gripper about the vertical axis. Positive is counterclockwise seen from above. The fingers "
             "close along the gripper's long axis, so turn until that axis crosses the object."),
-            _schema({"degrees": {"type": "number", "minimum": -180, "maximum": 180}}, ("degrees",)))
+            _schema(*state.with_arm({"degrees": {"type": "number", "minimum": -180, "maximum": 180}}, ("degrees",))))
 
     def execute(self, args, ctx):
-        target = self.state.yaw + np.deg2rad(args["degrees"])
-        receipt = ctx.body.rotate(target, ctx.cancel)
+        arm = self.arm(args)
+        target = self.state.yaws.get(arm, 0.0) + np.deg2rad(args["degrees"])
+        receipt = ctx.body.rotate(target, ctx.cancel, arm=arm)
         if receipt.stop_reason == "reached":
-            self.state.yaw = target
-        return self.report(ctx, _receipt_text(receipt, f"Turned {args['degrees']:g}°."), receipt)
+            self.state.yaws[arm] = target
+        return self.report(ctx, _receipt_text(receipt, f"Turned {args['degrees']:g}°."), receipt, arm=arm)
 
 
 class Grip(_Tool):
     def __init__(self, state):
         super().__init__(state, "grip", "Close or open the fingers. After closing, the result says whether "
                                         "something is between them.",
-                         _schema({"action": {"type": "string", "enum": ["close", "open"]}}, ("action",)))
+                         _schema(*state.with_arm({"action": {"type": "string", "enum": ["close", "open"]}},
+                                                 ("action",))))
 
     def execute(self, args, ctx):
-        info = ctx.body.info()
+        arm = self.arm(args)
+        info = ctx.body.info().arm(arm)
         target = 0.0 if args["action"] == "close" else info.max_opening_m
-        receipt = ctx.body.grip(target, ctx.cancel)
+        receipt = ctx.body.grip(target, ctx.cancel, arm=arm)
         if receipt.stop_reason != "reached":
-            return self.report(ctx, _receipt_text(receipt, ""), receipt)
+            return self.report(ctx, _receipt_text(receipt, ""), receipt, arm=arm)
         if args["action"] == "open":
-            return self.report(ctx, "Opened.", receipt)
-        width = ctx.body.observe().proprio.opening_m
+            return self.report(ctx, "Opened.", receipt, arm=arm)
+        width = ctx.body.observe().proprio.arm(arm).opening_m
         if width > EMPTY_GRIP_M:
-            return self.report(ctx, f"Closed. Something {width * 100:.1f} cm wide is between the fingers.", receipt)
-        return self.report(ctx, "Closed on nothing: the fingers met.", receipt)
+            return self.report(ctx, f"Closed. Something {width * 100:.1f} cm wide is between the fingers.", receipt,
+                               arm=arm)
+        if info.hand == "hand":
+            return self.report(ctx, "Closed the hand; it is not holding anything yet. A hand often finishes a grasp "
+                                    "as it lifts: nudge up a little and check whether it is holding.", receipt, arm=arm)
+        return self.report(ctx, "Closed on nothing: the fingers met.", receipt, arm=arm)
 
 
 class Done(_Tool):
@@ -248,12 +286,20 @@ class Pointing(Extension):
 
     name = "pointing"
 
-    def __init__(self, cameras: tuple[str, ...], expose_motion: bool = True):
-        self.state = PointingState(cameras)
+    def __init__(self, cameras: tuple[str, ...], expose_motion: bool = True, arms: tuple[str, ...] = ("hand",),
+                 robot: str = ""):
+        self.state = PointingState(cameras, tuple(arms))
         motion = [MoveTo(self.state), Lower(self.state), Nudge(self.state), Turn(self.state), Grip(self.state)]
         self.tools = [Look(self.state), *(motion if expose_motion else []), Done(self.state)]
         self.internal_tools = [] if expose_motion else motion
-        self.prompt = PROMPT if expose_motion else PROMPT.split(" A typical grasp")[0]
+        prompt = PROMPT if expose_motion else PROMPT.split(" A typical grasp")[0]
+        if robot:
+            prompt = f"You control {robot}.\n{prompt}"
+        if self.state.multi:
+            prompt += (f"\nThis robot has {len(arms)} arms: {', '.join(arms)}. Every motion tool takes `arm`. Each arm's "
+                       "fingertip marker is labelled with its first letter. The arms can collide with each other; "
+                       "move one out of the way before the other works near it.")
+        self.prompt = prompt
 
     def first_look(self, ctx: ToolContext) -> ToolResult:
         return self.tools[0].execute({}, ctx)
@@ -279,7 +325,7 @@ def surface_point(stored: StoredObservation, camera: str, x: int, y: int, table_
     return point
 
 
-def annotate(obs, camera: str, target, oid: str) -> bytes:
+def annotate(obs, camera: str, target, oid: str, arms: tuple[str, ...] = ()) -> bytes:
     img = Image.fromarray(obs.rgb[camera])
     draw = ImageDraw.Draw(img)
     cam = obs.cameras[camera]
@@ -300,15 +346,20 @@ def annotate(obs, camera: str, target, oid: str) -> bytes:
     draw.rectangle([w - 92, h - 22, w - 4, h - 4], fill=(0, 0, 0))
     draw.text((w - 88, h - 19), f"{oid} {camera}", fill=white)
 
-    tcp = obs.proprio.tcp_xyz
-    tip, floor = cam.project(tcp), cam.project([tcp[0], tcp[1], 0.0])
-    if tip and floor:
-        a, b = np.array(tip), np.array(floor)
-        n = max(1, int(np.linalg.norm(b - a) // 6))
-        for i in range(0, n, 2):
-            draw.line([tuple(a + (b - a) * i / n), tuple(a + (b - a) * min(i + 1, n) / n)], fill=(0, 230, 255), width=2)
-        draw.ellipse([b[0] - 6, b[1] - 3, b[0] + 6, b[1] + 3], outline=(0, 230, 255), width=2)
-        draw.ellipse([a[0] - 5, a[1] - 5, a[0] + 5, a[1] + 5], outline=(0, 230, 255), width=2)
+    for name in arms or (None,):
+        tcp = obs.proprio.arm(name).tcp_xyz
+        tip, floor = cam.project(tcp), cam.project([tcp[0], tcp[1], 0.0])
+        if tip and floor:
+            a, b = np.array(tip), np.array(floor)
+            n = max(1, int(np.linalg.norm(b - a) // 6))
+            for i in range(0, n, 2):
+                draw.line([tuple(a + (b - a) * i / n), tuple(a + (b - a) * min(i + 1, n) / n)], fill=(0, 230, 255),
+                          width=2)
+            draw.ellipse([b[0] - 6, b[1] - 3, b[0] + 6, b[1] + 3], outline=(0, 230, 255), width=2)
+            draw.ellipse([a[0] - 5, a[1] - 5, a[0] + 5, a[1] + 5], outline=(0, 230, 255), width=2)
+            if name:
+                draw.rectangle([a[0] + 7, a[1] - 7, a[0] + 17, a[1] + 6], fill=(0, 0, 0))
+                draw.text((a[0] + 9, a[1] - 6), name[0].upper(), fill=(0, 230, 255))
     if target is not None and (pt := cam.project(target)):
         x, y = pt
         draw.line([(x - 6, y - 6), (x + 6, y + 6)], fill=(255, 0, 200), width=2)

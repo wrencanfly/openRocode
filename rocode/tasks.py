@@ -84,6 +84,12 @@ class Task:
     def check(self, gt: dict) -> bool:
         return bool(self.evaluate(gt)[0])
 
+    def make_body(self, seed: int | None = None, width: int = 640, height: int = 480):
+        """A fresh body for this task. The caller closes it."""
+        from .body.mujoco_tabletop import MujocoTabletop
+
+        return MujocoTabletop(width, height, seed=seed, scene=self.scene)
+
     def spec(self) -> dict:
         """What a trace records, enough to run the task again."""
         success = (self._check.source if self._check is not None else
@@ -129,9 +135,9 @@ def _load_toml(p: Path) -> tuple[Scene, list[Task]]:
         data = tomllib.loads(p.read_text())
     except tomllib.TOMLDecodeError as err:
         raise ValueError(f"not valid TOML ({err})") from None
-    unknown = set(data) - {"object", "task"}
+    unknown = set(data) - {"object", "task", "robot"}
     if unknown:
-        raise ValueError(f"unknown section(s) {', '.join(sorted(unknown))}; expected [[object]] and [[task]]")
+        raise ValueError(f"unknown section(s) {', '.join(sorted(unknown))}; expected robot, [[object]] and [[task]]")
     objects = []
     for i, o in enumerate(data.get("object", []), start=1):
         bad = set(o) - OBJECT_KEYS
@@ -141,7 +147,9 @@ def _load_toml(p: Path) -> tuple[Scene, list[Task]]:
         if missing:
             raise ValueError(f"object {i}: missing {', '.join(sorted(missing))}")
         objects.append(make_object(**o))
-    scene = Scene(tuple(objects)) if objects else DEFAULT_SCENE
+    scene = Scene(tuple(objects) if objects else DEFAULT_SCENE.objects, data.get("robot", "gripper"))
+    if scene == DEFAULT_SCENE:
+        scene = DEFAULT_SCENE
     tasks = []
     for i, t in enumerate(data.get("task", []), start=1):
         bad = set(t) - TASK_KEYS

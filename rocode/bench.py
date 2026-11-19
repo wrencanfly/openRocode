@@ -185,6 +185,4 @@ class Bench:
 
 
 def _default_body(cfg: SessionConfig) -> Body:
-    from .body.mujoco_tabletop import MujocoTabletop
-
-    return MujocoTabletop(seed=cfg.seed, scene=get_task(cfg.task).scene)
+    return get_task(cfg.task).make_body(seed=cfg.seed)
