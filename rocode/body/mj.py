@@ -239,13 +239,16 @@ class MujocoBody:
         """How many `_step` calls cover this many physics steps."""
         return physics_steps if self.substeps == 1 else max(1, round(physics_steps / self.substeps))
 
-    def _init_render(self, width: int, height: int) -> None:
+    def _init_render(self, width: int, height: int, depth: bool = True) -> None:
+        """Renderers for the cameras. depth=False makes RGB-only cameras: observations carry no depth."""
         self.width, self.height = width, height
         g = self.model.vis.global_
         g.offwidth, g.offheight = max(g.offwidth, width), max(g.offheight, height)
         self._rgb = mujoco.Renderer(self.model, height, width)
-        self._depth = mujoco.Renderer(self.model, height, width)
-        self._depth.enable_depth_rendering()
+        self._depth = None
+        if depth:
+            self._depth = mujoco.Renderer(self.model, height, width)
+            self._depth.enable_depth_rendering()
 
     # ---- Body ----------------------------------------------------------------------------
 
@@ -266,11 +269,13 @@ class MujocoBody:
         for name in self._info.cameras:
             internal = self.camera_alias.get(name, name)
             self._rgb.update_scene(self.data, camera=internal)
-            self._depth.update_scene(self.data, camera=internal)
             rgb[name] = self._rgb.render().copy()
-            depth[name] = self._depth.render().copy()
+            if self._depth is not None:
+                self._depth.update_scene(self.data, camera=internal)
+                depth[name] = self._depth.render().copy()
             cams[name] = self._camera(name)
-        return Observation(t=float(self.data.time), rgb=rgb, depth=depth, cameras=cams, proprio=self._proprio())
+        return Observation(t=float(self.data.time), rgb=rgb, depth=depth if self._depth is not None else None,
+                           cameras=cams, proprio=self._proprio())
 
     def move(self, goal_xyz, guard: Guard, cancel: CancelToken, arm: str | None = None, max_s: float = 6.0) -> Receipt:
         a = self._arm(arm)

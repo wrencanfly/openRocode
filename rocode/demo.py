@@ -86,9 +86,19 @@ def scripted_pick_and_place(body, moves: list[tuple[str, str]]) -> ScriptedProvi
             gt = body.ground_truth()
             top = lambda name: gt["objects"][name] + [0, 0, scene[name].height_cm / 200]  # noqa: E731
             stored = request.images.latest()
-            cam = stored.observation.cameras["front"]
-            ox, oy = (round(v) for v in cam.project(top(obj)))
-            tx, ty = (round(v) for v in cam.project(top(onto) + [slots.get((obj, onto), 0.0), 0, 0]))
+            cams = stored.observation.cameras
+            other = next(c for c in cams if c != "front")
+
+            def click(point):
+                """Pixel arguments for a point: one click with depth, the same spot in two cameras without."""
+                x, y = (round(v) for v in cams["front"].project(point))
+                if stored.observation.depth is not None:
+                    return f'"front", {x}, {y}'
+                x2, y2 = (round(v) for v in cams[other].project(point))
+                return f'"front", {x}, {y}, camera2="{other}", x2={x2}, y2={y2}'
+
+            pick = click(top(obj))
+            place = click(top(onto) + [slots.get((obj, onto), 0.0), 0, 0])
             arm, away = "", ""
             if len(body.arms) > 1:   # an arm that reaches both ends of the move, the nearer one if both do
                 ends = [top(obj) + [0, 0, 0.06], top(onto) + [0, 0, scene[obj].height_cm / 100 + 0.03]]
@@ -104,13 +114,13 @@ def scripted_pick_and_place(body, moves: list[tuple[str, str]]) -> ScriptedProvi
                                for i, d in enumerate(steps) if abs(d) > 0.5 or i == 0)
             turn = f"robot.turn(90{arm})\n" if scene[obj].shape == "mug" else ""
             code = f"""
-{turn}robot.move_to("front", {ox}, {oy}, hover_cm=6, observation="{stored.id}"{arm})
+{turn}robot.move_to({pick}, hover_cm=6, observation="{stored.id}"{arm})
 r = robot.lower({arm.lstrip(', ')})
 robot.grip("close"{arm})
 r = robot.nudge("front", up_cm=12{arm})
 if not r.holding:
     raise SystemExit("missed {obj}")
-robot.move_to("front", {tx}, {ty}, hover_cm={scene[obj].height_cm + 3:g}, observation="{stored.id}"{arm})
+robot.move_to({place}, hover_cm={scene[obj].height_cm + 3:g}, observation="{stored.id}"{arm})
 robot.lower({arm.lstrip(', ')})
 robot.grip("open"{arm})
 robot.nudge("front", up_cm=10{arm})

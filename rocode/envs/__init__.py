@@ -45,6 +45,6 @@ def tasks(env: str) -> dict[str, EnvTask]:
     return importlib.import_module(ENVIRONMENTS[env]).TASKS if env in ENVIRONMENTS else {}
 
 
-def make_body(task_id: str, seed: int | None, width: int, height: int):
+def make_body(task_id: str, seed: int | None, width: int, height: int, depth: bool = True):
     env, short = task_id.split(":", 1)
-    return module(env).make_body(tasks(env)[short], seed=seed, width=width, height=height)
+    return module(env).make_body(tasks(env)[short], seed=seed, width=width, height=height, depth=depth)

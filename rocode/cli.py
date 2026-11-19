@@ -99,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
     run.add_argument("--reasoning", action="store_true",
                      help="openai provider: send --effort as reasoning_effort and record the model's reasoning summary.")
+    run.add_argument("--rgb-only", action="store_true",
+                     help="Cameras without depth: the model clicks a spot in two cameras to place it above the table.")
     run.add_argument("--max-steps", type=int, default=60)
     run.add_argument("--keep-images", type=int, default=None, help="Trim pictures older than N tool results.")
     run.add_argument("--seed", type=int, default=None)
@@ -130,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
     bench.add_argument("--reasoning", action="store_true",
                        help="openai: models: send --effort as reasoning_effort and record reasoning summaries.")
+    bench.add_argument("--rgb-only", action="store_true", help="Cameras without depth for every episode.")
     bench.add_argument("--max-steps", type=int, default=60)
     bench.add_argument("--keep-images", type=int, default=None)
     bench.add_argument("--out", type=Path, default=Path("runs"))
@@ -222,7 +225,8 @@ def main(argv: list[str] | None = None) -> int:
     out = default_out_dir(args.out, task)
     cfg = SessionConfig(task=task, provider=args.provider, model=model, base_url=args.base_url,
                         policy=args.policy, effort=args.effort, max_steps=args.max_steps,
-                        keep_image_turns=args.keep_images, seed=args.seed, out_dir=out, reasoning=args.reasoning)
+                        keep_image_turns=args.keep_images, seed=args.seed, out_dir=out, reasoning=args.reasoning,
+                        depth=not args.rgb_only)
     control = ControlChannel()
     if sys.stdin.isatty():
         print("Type to talk to the model mid-run. /pause, /resume, /stop (emergency stop).")
@@ -305,7 +309,7 @@ def bench_command(args, ap: argparse.ArgumentParser, catalog: Catalog) -> int:
     try:
         plan = BenchPlan(tasks=tasks, models=models, seeds=seeds, policy=args.policy,
                          effort=args.effort, max_steps=args.max_steps, keep_image_turns=args.keep_images,
-                         base_url=args.base_url, reasoning=args.reasoning)
+                         base_url=args.base_url, reasoning=args.reasoning, depth=not args.rgb_only)
     except ValueError as err:
         ap.error(str(err))
     n = len(plan.cells())

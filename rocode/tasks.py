@@ -85,15 +85,15 @@ class Task:
     def check(self, gt: dict) -> bool:
         return bool(self.evaluate(gt)[0])
 
-    def make_body(self, seed: int | None = None, width: int = 640, height: int = 480):
-        """A fresh body for this task. The caller closes it."""
+    def make_body(self, seed: int | None = None, width: int = 640, height: int = 480, depth: bool = True):
+        """A fresh body for this task; depth=False gives RGB-only cameras. The caller closes it."""
         if self.env:
             from . import envs
 
-            return envs.make_body(self.env, seed, width, height)
+            return envs.make_body(self.env, seed, width, height, depth)
         from .body.mujoco_tabletop import MujocoTabletop
 
-        return MujocoTabletop(width, height, seed=seed, scene=self.scene)
+        return MujocoTabletop(width, height, seed=seed, scene=self.scene, depth=depth)
 
     def spec(self) -> dict:
         """What a trace records, enough to run the task again."""

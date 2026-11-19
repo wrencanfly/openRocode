@@ -33,8 +33,9 @@ CAMERA_PREFERENCE = ("agentview", "sideview", "frontview", "birdview")
 ROBOT = "Panda"
 
 
-def make_body(task: EnvTask, seed: int | None = None, width: int = 640, height: int = 480):
-    return RobosuiteBody(task.name, seed, width, height)
+def make_body(task: EnvTask, seed: int | None = None, width: int = 640, height: int = 480,
+              depth: bool = True):
+    return RobosuiteBody(task.name, seed, width, height, depth)
 
 
 def _body_class():
@@ -84,10 +85,10 @@ def _body_class():
     class RobosuiteBody(MujocoBody):
         """Implements `rocode.body.base.Body` on a robosuite environment."""
 
-        def __init__(self, env_name: str, seed: int | None, width: int, height: int):
+        def __init__(self, env_name: str, seed: int | None, width: int, height: int, depth: bool = True):
             import robosuite as suite
 
-            self.env_name, self._size = env_name, (width, height)
+            self.env_name, self._size, self._depth_on = env_name, (width, height), depth
             # robosuite draws every random placement from one generator made from this seed
             self.env = suite.make(env_name, robots=ROBOT, has_renderer=False, has_offscreen_renderer=False,
                                   use_camera_obs=False, ignore_done=True, horizon=10**9, control_freq=20,
@@ -110,13 +111,13 @@ def _body_class():
             self._info = BodyInfo(
                 name=f"robosuite-{env_name}",
                 cameras=tuple(c for c in CAMERA_PREFERENCE if c in cams)[:2],
-                has_depth=True,
+                has_depth=depth,
                 workspace=self._workspace(),
                 max_opening_m=arm.max_opening_m,
                 arms=(arm,),
                 robot=f"a Franka Panda arm with a parallel gripper (robosuite {env_name})",
             )
-            self._init_render(width, height)
+            self._init_render(width, height, depth)
 
         def _workspace(self) -> Workspace:
             env = self.env
@@ -134,7 +135,7 @@ def _body_class():
         def reset(self, seed: int | None = None) -> None:
             """A fresh environment made with this seed, so a seed always gives the same layout."""
             self.close()
-            self.__init__(self.env_name, seed, *self._size)
+            self.__init__(self.env_name, seed, *self._size, self._depth_on)
 
         def _step(self) -> None:
             base_rot = self.data.body(self._base).xmat.reshape(3, 3)
@@ -161,5 +162,5 @@ def _body_class():
     return RobosuiteBody
 
 
-def RobosuiteBody(env_name: str, seed: int | None = None, width: int = 640, height: int = 480):
-    return _body_class()(env_name, seed, width, height)
+def RobosuiteBody(env_name: str, seed: int | None = None, width: int = 640, height: int = 480, depth: bool = True):
+    return _body_class()(env_name, seed, width, height, depth)

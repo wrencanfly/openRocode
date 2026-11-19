@@ -63,6 +63,7 @@ class BenchPlan:
     keep_image_turns: int | None = None
     base_url: str | None = None           # for every openai: model
     reasoning: bool = False               # openai: models: send reasoning_effort, record reasoning summaries
+    depth: bool = True                    # False: RGB-only cameras for every episode
 
     def __post_init__(self) -> None:
         self.tasks = [get_task(t) for t in self.tasks]
@@ -84,7 +85,7 @@ class BenchPlan:
                 "models": [str(m) for m in self.models], "seeds": self.seeds,
                 "policy": self.policy, "effort": self.effort, "max_steps": self.max_steps,
                 "max_seconds": self.max_seconds, "keep_image_turns": self.keep_image_turns,
-                "reasoning": self.reasoning}
+                "reasoning": self.reasoning, "depth": self.depth}
 
 
 def new_batch_id() -> str:
@@ -143,7 +144,7 @@ class Bench:
                                 policy=self.plan.policy, effort=self.plan.effort, max_steps=self.plan.max_steps,
                                 max_seconds=self.plan.max_seconds, keep_image_turns=self.plan.keep_image_turns,
                                 seed=seed, out_dir=self.root / entry["id"], batch=self.id,
-                                reasoning=self.plan.reasoning and model.provider == "openai")
+                                reasoning=self.plan.reasoning and model.provider == "openai", depth=self.plan.depth)
             entry["status"] = "running"
             self._save()
             if self.on_start:
@@ -185,4 +186,4 @@ class Bench:
 
 
 def _default_body(cfg: SessionConfig) -> Body:
-    return get_task(cfg.task).make_body(seed=cfg.seed)
+    return get_task(cfg.task).make_body(seed=cfg.seed, depth=cfg.depth)

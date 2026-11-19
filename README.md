@@ -37,7 +37,7 @@ openRocode is an open agent harness that turns robot control into **3D computer 
 
 Five decisions shape openRocode. Each one costs something, and the cost is part of the decision.
 
-1. **The model points; the harness does the geometry.** Tools take a pixel in a labelled picture, or a direction as seen in one camera, in centimetres. Depth, calibration, frames and inverse kinematics never reach the model, and no tool returns a world coordinate. The model works the way a person at a screen would, so what it is tested on is seeing and deciding, not arithmetic on poses. *The cost:* a click needs depth, simulated or from an RGB-D camera.
+1. **The model points; the harness does the geometry.** Tools take a pixel in a labelled picture, or a direction as seen in one camera, in centimetres. Depth, calibration, frames and inverse kinematics never reach the model, and no tool returns a world coordinate. The model works the way a person at a screen would, so what it is tested on is seeing and deciding, not arithmetic on poses. Depth is not required: with RGB-only cameras (`--rgb-only`), a click on the table lands on the table, and a point above it is clicked in two cameras and triangulated by the harness, which says where to look if the two clicks disagree. *The cost:* without depth, pointing at anything above the table takes two clicks.
 2. **Our own small agent loop.** The core (loop, hooks, events, operator channel) is about 700 lines and talks to model APIs directly: Claude, and any OpenAI-compatible endpoint. Every message, call, reasoning summary and token passes through it, so all of it can be guarded, interrupted and recorded. *The cost:* no coding-agent CLI comes along for free.
 3. **Tools and programs in the same run, chosen by the model.** At every step the model can make one call or write a `run_code` program. A program's robot calls go through the same validation, safety gate and emergency stop as direct calls.
 4. **Evaluation is part of the harness, not an afterthought.** A task is data: a scene, an instruction, and a success check the model never sees, judged clause by clause. Every episode is a versioned trace that carries the whole task. The same seed gives the same table, and `rocode bench` with the Compare page shows which model failed which condition.
@@ -51,7 +51,7 @@ Five decisions shape openRocode. Each one costs something, and the cost is part 
 |---|---|---|
 | What the model sends to move the robot | A pixel in a picture, or a direction seen in one camera, in centimetres | An end-effector target position (metres) and orientation (quaternion); a tool can triangulate pixels from several calibrated views |
 | Calibration and geometry | Kept inside the harness | Given to the agent: camera intrinsics and extrinsics, robot descriptions |
-| Depth | Needed for clicks | Its paper's setting is RGB only; depth can be turned on |
+| Depth | Optional: with RGB only, the model clicks a spot in two cameras and the harness triangulates | Its paper's setting is RGB only; depth can be turned on |
 | Agent runtime | Its own loop over model APIs | Codex and Claude Code as runtimes (OpenCode and Gemini CLI experimental) |
 | Code as policy | Available in any run; the model picks per step | A run mode (`--interaction-mode code_as_policy`) using the agent's own shell |
 | Tasks and success | Your own tasks as data, checked per condition, plus robosuite and Meta-World tasks | Each benchmark's own tasks and outcomes |
@@ -252,7 +252,7 @@ A lightly trimmed excerpt from `rocode run mug_to_coaster` with Claude Opus 5.5.
 | Tool | What it does |
 |---|---|
 | `look()` | Fresh pictures from every camera. |
-| `move_to(camera, x, y, hover_cm=8, observation=None)` | Hover above the surface point under that pixel. Rises, travels, descends; stops on contact. |
+| `move_to(camera, x, y, hover_cm=8, observation=None)` | Hover above the surface point under that pixel. Rises, travels, descends; stops on contact. With RGB-only cameras, `camera2, x2, y2` click the same spot in another camera to place a point above the table. |
 | `lower(cm=None)` | Straight down until contact, or by `cm`. |
 | `nudge(camera, right_cm, away_cm, up_cm)` | A small move in directions as seen in that camera's picture. |
 | `turn(degrees)` | Rotate the gripper about the vertical. |
@@ -270,7 +270,7 @@ r = robot.grip("close")
 print(r.holding, r.opening_cm, r.height_cm, r.stop)
 ```
 
-`--policy tools|code|both` sets how the model may act. The default is `both`.
+`--policy tools|code|both` sets how the model may act. The default is `both`. `--rgb-only` takes the cameras' depth away, for `rocode run` and `rocode bench`.
 
 ## How it works
 

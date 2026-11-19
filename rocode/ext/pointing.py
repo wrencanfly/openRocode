@@ -32,6 +32,11 @@ gripper moving afterwards does not change what you clicked. A typical grasp: mov
 object, check alignment in every view, turn so the fingers close across the object's narrow side, \
 lower until contact, grip close, then nudge up before travelling."""
 
+PROMPT_RGB_ONLY = """These cameras have no depth. A single click with move_to is placed where that line of sight meets the table, which is right for a spot on the table. To point at anything above the table, such as the top of an object, click the same spot in a second camera too (camera2, x2, y2, in the same observation): the harness intersects the two lines of sight. If the two clicks do not show the same spot, nothing moves and the result says where along its line the spot appears in the second picture."""
+
+MAX_MISS_M = 0.015          # two lines of sight that pass farther apart than this do not show the same spot
+MIN_VIEW_ANGLE_DEG = 8.0    # two views closer in direction than this cannot place a point in depth
+
 
 def _schema(props: dict, required: tuple = ()) -> dict:
     return {"type": "object", "properties": props, "required": list(required), "additionalProperties": False}
@@ -41,6 +46,7 @@ def _schema(props: dict, required: tuple = ()) -> dict:
 class PointingState:
     cameras: tuple[str, ...]
     arms: tuple[str, ...] = ("hand",)
+    depth: bool = True                  # False: RGB-only cameras, and move_to takes a second click
     last_target: np.ndarray | None = None
     yaws: dict = field(default_factory=dict)
 
@@ -143,17 +149,28 @@ class MoveTo(_Tool):
                 "hover_cm": {"type": "number", "minimum": 0, "maximum": 25, "default": 8},
                 "observation": {"type": "string", "description": "Which pictures you clicked on, e.g. o4. "
                                                                  "Defaults to the latest."},
+                **({} if state.depth else {
+                    "camera2": {"type": "string", "enum": list(state.cameras),
+                                "description": "Another camera showing the same spot, for points above the table."},
+                    "x2": {"type": "integer", "description": "Pixel column of the same spot in camera2."},
+                    "y2": {"type": "integer", "description": "Pixel row of the same spot in camera2."},
+                }),
             }, ("camera", "x", "y"))))
 
     def execute(self, args, ctx):
         stored = ctx.observations.get(args["observation"]) if "observation" in args else ctx.observations.latest()
         if stored is None:
             return ToolResult.error(f"There are no pictures called {args.get('observation')}. Nothing moved.")
-        surface = surface_point(stored, args["camera"], int(args["x"]), int(args["y"]),
-                                ctx.body.info().workspace.table_z)
+        second = None
+        if "camera2" in args or "x2" in args or "y2" in args:
+            if not all(k in args for k in ("camera2", "x2", "y2")):
+                return ToolResult.error("A second click needs camera2, x2 and y2 together. Nothing moved.")
+            second = (args["camera2"], int(args["x2"]), int(args["y2"]))
+        surface, note = locate(stored, (args["camera"], int(args["x"]), int(args["y"])), second,
+                               ctx.body.info().workspace.table_z)
         arm = self.arm(args)
-        if isinstance(surface, str):
-            return self.report(ctx, surface + " Nothing moved.", Receipt("none", "refused", True), ok=False, arm=arm)
+        if surface is None:
+            return self.report(ctx, note + " Nothing moved.", Receipt("none", "refused", True), ok=False, arm=arm)
         hover = args.get("hover_cm", 8) / 100
         goal = surface + [0, 0, hover]
         if not ctx.body.info().workspace.contains(goal):
@@ -171,8 +188,8 @@ class MoveTo(_Tool):
                     receipt = Receipt("partial", receipt.stop_reason, receipt.stop_confirmed, receipt.peak_force_n,
                                       receipt.detail)
                 break
-        return self.report(ctx, _receipt_text(receipt, f"Hovering {hover * 100:g} cm above the point you clicked "
-                                                       f"in {stored.id}."), receipt, arm=arm)
+        done = f"Hovering {hover * 100:g} cm above the point you clicked in {stored.id}."
+        return self.report(ctx, _receipt_text(receipt, done) + (f" {note}" if note else ""), receipt, arm=arm)
 
 
 class Lower(_Tool):
@@ -287,8 +304,8 @@ class Pointing(Extension):
     name = "pointing"
 
     def __init__(self, cameras: tuple[str, ...], expose_motion: bool = True, arms: tuple[str, ...] = ("hand",),
-                 robot: str = "", turns: bool = True):
-        self.state = PointingState(cameras, tuple(arms))
+                 robot: str = "", turns: bool = True, depth: bool = True):
+        self.state = PointingState(cameras, tuple(arms), depth=depth)
         motion = [MoveTo(self.state), Lower(self.state), Nudge(self.state), *([Turn(self.state)] if turns else []),
                   Grip(self.state)]
         self.tools = [Look(self.state), *(motion if expose_motion else []), Done(self.state)]
@@ -298,6 +315,8 @@ class Pointing(Extension):
             prompt = prompt.replace(" turn so the fingers close across the object's narrow side,", "")
         if robot:
             prompt = f"You control {robot}.\n{prompt}"
+        if not depth:
+            prompt += "\n" + PROMPT_RGB_ONLY
         if self.state.multi:
             prompt += (f"\nThis robot has {len(arms)} arms: {', '.join(arms)}. Every motion tool takes `arm`. Each arm's "
                        "fingertip marker is labelled with its first letter. The arms can collide with each other; "
@@ -312,6 +331,7 @@ class Pointing(Extension):
 
 
 def surface_point(stored: StoredObservation, camera: str, x: int, y: int, table_z: float) -> np.ndarray | str:
+    """The 3D point under one click, from the depth image."""
     obs = stored.observation
     if camera not in obs.cameras:
         return f"{stored.id} has no camera called {camera}."
@@ -326,6 +346,76 @@ def surface_point(stored: StoredObservation, camera: str, x: int, y: int, table_
     if point[2] < table_z - 0.01:
         return f"({x}, {y}) in {stored.id} {camera} is off the table."
     return point
+
+
+def locate(stored: StoredObservation, first: tuple[str, int, int], second: tuple[str, int, int] | None,
+           table_z: float) -> tuple[np.ndarray | None, str]:
+    """Where a click points, and a note for the model (or, when the point is None, why it cannot be placed).
+
+    With depth, one click is enough. Without it, one click lands where its line of sight meets the table, and
+    a second click of the same spot in another camera places it anywhere by intersecting the two lines."""
+    obs = stored.observation
+    for camera, x, y in (first, *([second] if second else [])):
+        if camera not in obs.cameras:
+            return None, f"{stored.id} has no camera called {camera}."
+        cam = obs.cameras[camera]
+        if not (0 <= x < cam.width and 0 <= y < cam.height):
+            return None, f"({x}, {y}) is outside the {cam.width}×{cam.height} {camera} picture."
+    if obs.depth is not None and first[0] in obs.depth:
+        point = surface_point(stored, *first, table_z)
+        return (None, point) if isinstance(point, str) else (point, "")
+    if second is None:
+        origin, ray = _ray(obs.cameras[first[0]], first[1], first[2])
+        if ray[2] > -1e-6:
+            return None, f"({first[1]}, {first[2]}) in {first[0]} looks above the table, not at it."
+        point = origin + ray * (table_z - origin[2]) / ray[2]
+        return point, ("No depth: placed on the table under your click. For a point above the table, also click "
+                       "the same spot in another camera (camera2, x2, y2).")
+    if second[0] == first[0]:
+        return None, "The second click must be in a different camera."
+    return _triangulate(obs, first, second, table_z)
+
+
+def _ray(cam, x: float, y: float) -> tuple[np.ndarray, np.ndarray]:
+    d = cam.deproject(x, y, 1.0) - cam.position
+    return cam.position.copy(), d / np.linalg.norm(d)
+
+
+def _triangulate(obs, first, second, table_z: float) -> tuple[np.ndarray | None, str]:
+    (c1, x1, y1), (c2, x2, y2) = first, second
+    o1, d1 = _ray(obs.cameras[c1], x1, y1)
+    o2, d2 = _ray(obs.cameras[c2], x2, y2)
+    b = float(d1 @ d2)
+    if 1 - b * b < np.sin(np.deg2rad(MIN_VIEW_ANGLE_DEG)) ** 2:
+        return None, f"{c1} and {c2} look at that spot from almost the same direction; use cameras on different sides."
+    w = o1 - o2
+    d, e = float(d1 @ w), float(d2 @ w)
+    s = (b * e - d) / (1 - b * b)
+    t = (e - b * d) / (1 - b * b)
+    p1, p2 = o1 + s * d1, o2 + t * d2
+    miss = float(np.linalg.norm(p1 - p2))
+    if s <= 0 or t <= 0 or miss > MAX_MISS_M:
+        hint = _epipolar_hint(obs.cameras[c2], o1, d1, (x2, y2))
+        return None, (f"Your two clicks do not show the same spot: their lines of sight pass {miss * 100:.1f} cm apart. "
+                      f"The spot you clicked in {c1} appears in {c2} somewhere along a line; the nearest point of that "
+                      f"line to your {c2} click is ({hint[0]}, {hint[1]}), {hint[2]} px away.")
+    point = (p1 + p2) / 2
+    if point[2] < table_z - 0.01:
+        return None, "Those two clicks meet below the table."
+    return point, f"Placed from two views ({c1} and {c2}; lines of sight {miss * 100:.1f} cm apart)."
+
+
+def _epipolar_hint(cam, origin, ray, click) -> tuple[int, int, int]:
+    """Where the first click's line of sight shows up in the second picture, nearest the second click."""
+    best = None
+    for dist in np.linspace(0.05, 3.0, 600):
+        px = cam.project(origin + ray * dist)
+        if px is None or not (0 <= px[0] < cam.width and 0 <= px[1] < cam.height):
+            continue
+        gap = float(np.hypot(px[0] - click[0], px[1] - click[1]))
+        if best is None or gap < best[2]:
+            best = (round(px[0]), round(px[1]), round(gap))
+    return best or (click[0], click[1], 0)
 
 
 def annotate(obs, camera: str, target, oid: str, arms: tuple[str, ...] = ()) -> bytes:
