@@ -94,3 +94,12 @@ def test_tasks_are_solvable_with_each_robot(robot, task_id, tmp_path):
     assert report.success, [c.to_dict() for c in report.extra["clauses"]]
     spec = json.loads((tmp_path / "episode.jsonl").read_text().splitlines()[0])["config"]["task_spec"]
     assert spec["scene"]["robot"] == robot
+
+
+def test_robot_scenes_keep_object_angles_and_arm_joint_ranges(make):
+    """MuJoCo 3.3.0 converts an attached robot's joint ranges with the parent's angle unit; robot scenes are
+    therefore written in radians, and objects must keep their yaw."""
+    gripper, panda = make("gripper"), make("panda")
+    assert np.allclose(gripper.data.body("block").xquat, panda.data.body("block").xquat, atol=1e-6)
+    ranges = panda.model.jnt_range[panda.arms["arm"].joints]
+    assert ranges[0, 1] > 2.8   # joint 1 of a Panda turns ±2.9 rad

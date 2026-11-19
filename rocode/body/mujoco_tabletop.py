@@ -85,7 +85,7 @@ def _f(*vals: float) -> str:
     return " ".join(f"{v:.6g}" for v in vals)
 
 
-def object_xml(o: SceneObject) -> str:
+def object_xml(o: SceneObject, radians: bool = False) -> str:
     """MJCF for one scene object: a geom on the table if fixed, otherwise a free body."""
     sx, sy, sz = (v / 100 for v in o.size_cm)
     x, y = (v / 100 for v in o.at_cm)
@@ -94,8 +94,8 @@ def object_xml(o: SceneObject) -> str:
     size = {"box": _f(sx / 2, sy / 2, sz / 2), "sphere": _f(sx / 2)}.get(o.shape, _f(sx / 2, sz / 2))
     if o.fixed:
         return (f'    <geom name="{o.name}" type="{kind}" pos="{_f(x, y, sz / 2)}" size="{size}" rgba="{rgba}"'
-                f'{_euler(o)}/>\n')
-    out = (f'    <body name="{o.name}" pos="{_f(x, y, sz / 2)}"{_euler(o)}>\n      <freejoint/>\n'
+                f'{_euler(o, radians)}/>\n')
+    out = (f'    <body name="{o.name}" pos="{_f(x, y, sz / 2)}"{_euler(o, radians)}>\n      <freejoint/>\n'
            f'      <geom name="{o.name}" type="{kind}" size="{size}" rgba="{rgba}" mass="{_f(o.mass_kg)}"/>\n')
     if o.shape == "mug":   # a handle on the +x side, sized for the default 6 x 9 cm mug and scaled with height
         out += (f'      <geom name="{o.name}_handle" type="box" pos="{_f(sx / 2 + 0.006, 0, sz * (0.005 / 0.09))}" '
@@ -103,15 +103,22 @@ def object_xml(o: SceneObject) -> str:
     return out + "    </body>\n"
 
 
-def _euler(o: SceneObject) -> str:
-    return f' euler="0 0 {o.yaw_deg:.6g}"' if o.yaw_deg else ""
+def _euler(o: SceneObject, radians: bool = False) -> str:
+    if not o.yaw_deg:
+        return ""
+    return f' euler="0 0 {np.deg2rad(o.yaw_deg) if radians else o.yaw_deg:.6g}"'
 
 
 def scene_xml(scene: Scene, robot: bool = True) -> str:
-    """The MJCF for a scene; with robot=False, without the floating gripper (another robot is attached later)."""
-    objects = "".join(object_xml(o) for o in (*scene.fixed, *scene.movable))
-    return (SCENE_XML.replace("{objects}", objects).replace("{robot}", GRIPPER_XML if robot else "")
-            .replace("{robot_tail}", GRIPPER_TAIL if robot else ""))
+    """The MJCF for a scene; with robot=False, without the floating gripper (another robot is attached later).
+    That version is written in radians: MuJoCo 3.3.0 converts an attached robot's joint ranges with the parent's
+    angle unit, so a parent in degrees would shrink them about 57 times."""
+    objects = "".join(object_xml(o, radians=not robot) for o in (*scene.fixed, *scene.movable))
+    xml = (SCENE_XML.replace("{objects}", objects).replace("{robot}", GRIPPER_XML if robot else "")
+           .replace("{robot_tail}", GRIPPER_TAIL if robot else ""))
+    if not robot:
+        xml = xml.replace('<mujoco model="rocode_tabletop">', '<mujoco model="rocode_tabletop">\n  <compiler angle="radian"/>')
+    return xml
 
 
 class MujocoTabletop(MujocoBody):
