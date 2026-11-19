@@ -24,9 +24,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/dashboard-watch.webp" alt="The openRocode dashboard replaying a real episode: Claude Opus 5.5 writes programs that pick up the blue block and set it on the red mug, shown in two camera views with readings and a telemetry chart." width="100%">
+  <a href="docs/assets/openrocode-tour.mp4"><img src="docs/assets/openrocode-tour.webp" alt="An 18-second tour of openRocode: a one-sentence task, three models' first decisions on the same camera picture, Claude Opus 5.5 writing the code, the harness moving the gripper, the whole run as a filmstrip, the same run in the dashboard with the model's reasoning, program and telemetry, and three models compared, each succeeding 3 out of 3 times." width="100%"></a>
 </p>
-<p align="center"><sub>A real, unscripted run. Claude Opus 5.5, allowed to act only through programs, stacks the block on the mug in 5 turns and 18 seconds.</sub></p>
+<p align="center"><sub>Everything in this tour comes from real runs: the task sentence, each model's own words, the code, the pictures and the verdicts. <a href="docs/assets/openrocode-tour.mp4">Watch it in full quality (MP4)</a>.</sub></p>
 
 openRocode is an open agent harness that turns robot control into **3D computer use**. The model looks at camera pictures, clicks where the gripper should go, nudges in directions it can see, or writes a short Python program for the parts that need loops and checks. The harness does the geometry, guards every motion, lets a person step in at any moment, and records everything.
 
@@ -41,7 +41,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e '.[sim,agent,openai,dev]'
 
 rocode demo        # a scripted episode, no API key: checks your install
-pytest             # 28 tests, about 5 seconds, no API key
+pytest             # 40 tests, about 8 seconds, no API key
 ```
 
 Then give a model the arm, and watch it in the dashboard:
@@ -57,6 +57,13 @@ rocode run mug_to_coaster --view --provider openai --model claude-opus-5-5
 ```
 
 `rocode tasks` lists the tasks. `rocode view` browses every recorded episode. `rocode replay runs/<episode>` prints one in the terminal.
+
+Compare models on the same tasks, with several object layouts each:
+
+```bash
+rocode bench mug_to_coaster stack_block_on_mug \
+  --model openai:claude-opus-5-5 --model openai:gpt-6.1-sol --repeat 3 --view
+```
 
 ## Features
 
@@ -86,14 +93,22 @@ Every motion is force-guarded and workspace-checked by the body. Physical action
 
 ### Any model, one harness
 
-Claude through the Anthropic API, or any OpenAI-compatible endpoint. History is append-only, so prompt caches stay warm and Claude's thinking blocks stay valid. Swap the model with a flag; nothing else changes.
+Claude through the Anthropic API, or any OpenAI-compatible endpoint. History is append-only, so prompt caches stay warm and Claude's thinking blocks stay valid. Swap the model with a flag; nothing else changes. On OpenAI-compatible endpoints, `--reasoning` also sends `--effort` as `reasoning_effort` and records the model's reasoning summary.
 
-### Every run is recorded
+### Every run is a trace
 
-Each episode is an event log plus every picture the model was shown, scored against the simulator's ground truth, which the model never sees.
+Each episode is recorded as a trace: every turn, the model's reasoning when the provider returns it, every tool call (nested under the program that made it), every picture the model was shown, what the robot actually did, what a person said, and the simulator's ground-truth verdict, which the model never sees. The [trace format](docs/trace-format.md) is versioned and documented, and `rocode.trace` reads it, so your own tools can too.
 
 <p align="center">
   <img src="docs/assets/dashboard-home.png" alt="Dashboard home in light theme: a table of episodes with task, model, result, turns, duration, tokens and start time." width="100%">
+</p>
+
+### Compare models on the same tasks
+
+`rocode bench` runs tasks × models × seeds one episode at a time, each seed moving the objects a few centimetres. The dashboard's Compare page shows successes, median turns, time and tokens for each pair, one dot per episode that opens its trace, and why each failed one failed. API or harness errors are listed beside the rate, not counted against the model.
+
+<p align="center">
+  <img src="docs/assets/dashboard-compare.png" alt="The Compare page in light theme for a batch of 9 episodes: Claude Opus 5.5, Claude Sonnet 5.5 and GPT-6.1 Sol each put the mug on the coaster 3 out of 3 times, with median turns, time and input tokens." width="100%">
 </p>
 
 ### Small and hackable
@@ -108,8 +123,13 @@ rocode view                        # every episode in ./runs, including runs sti
 ```
 
 - **Episodes**: every run with its model, result, turns, duration and tokens.
+- **Compare**: tasks against models for a `rocode bench` batch, or for everything recorded: successes, median turns, time and tokens, one dot per episode that opens it, and why each failed one failed.
 - **Debug**: the turn-by-turn timeline (what the model said, each call, each program with its robot calls and output) beside both cameras, the readings for the selected step, and a telemetry chart.
 - **Watch**: both cameras fill the page, with the telemetry chart and a strip of every picture the model saw. A running episode opens here.
+
+<p align="center">
+  <img src="docs/assets/dashboard-watch.webp" alt="The dashboard's Watch layout replaying a real episode: Claude Opus 5.5 writes programs that pick up the blue block and set it on the red mug, shown in two camera views with readings and a telemetry chart." width="100%">
+</p>
 
 Light and dark themes, arrow keys to step, space to replay, and links that open on a given step (`#/e/<episode>?mode=watch&step=5`). It is plain HTML and JavaScript served by Python's standard library: no build step, no Node. It listens on 127.0.0.1 only, and control requests need a token that only its own page carries.
 
@@ -178,13 +198,21 @@ print(r.holding, r.opening_cm, r.height_cm, r.stop)
 
 - **Append-only history.** Nothing already sent to the model is edited. Old pictures are trimmed only by the provider's own mechanism (`--keep-images N`).
 - **Hooks, not forks.** An extension can add tools and prompt text, refuse or rewrite a call before it runs, change a result after it runs, or watch the event stream.
-- **Bodies are one small interface.** Adding a robot means implementing `info`, `observe`, `move`, `rotate`, `grip`, `stop` and `reset`. Nothing above that layer changes.
+- **Bodies are one small interface.** Adding a robot means implementing `info`, `observe`, `move`, `rotate`, `grip`, `stop`, `reset`, `ground_truth` and `close`. Nothing above that layer changes.
 
 Design notes: [docs/design.md](docs/design.md) (goals and scope) and [docs/core-design.md](docs/core-design.md) (internals). The dashboard follows [DESIGN.md](DESIGN.md).
 
 ## Results so far
 
-Single runs on the MuJoCo tabletop, not success rates. Every run below succeeded by the simulator's ground truth.
+`rocode bench mug_to_coaster --repeat 3` with three models, through an OpenAI-compatible proxy at each model's default reasoning effort. Every episode was judged by the simulator's ground truth. Nine runs are a small sample, not a leaderboard.
+
+| Model | Succeeded | Median turns | Median time | Mean input tokens |
+|---|---|---|---|---|
+| Claude Opus 5.5 | 3/3 | 8 | 34.9 s | 71k |
+| Claude Sonnet 5.5 | 3/3 | 9 | 34.4 s | 107k |
+| GPT-6.1 Sol | 3/3 | 10 | 38.5 s | 48k |
+
+Earlier single runs, all successful:
 
 | Task | Model | How it acted | Turns | Time |
 |---|---|---|---|---|
@@ -203,26 +231,26 @@ rocode/
   providers/   anthropic.py, openai_compat.py, scripted.py
   body/        base.py (the body contract), mujoco_tabletop.py
   ext/         pointing.py, code.py (run_code), safety.py, recorder.py
-  view/        the dashboard: episodes.py, server.py, static/
-  session.py   tasks.py   cli.py   demo.py
-tests/         harness, provider and dashboard tests (no API key needed)
-docs/          design notes and images
+  view/        the dashboard: episodes.py, compare.py, server.py, static/
+  session.py   bench.py   trace.py   tasks.py   cli.py   demo.py
+tests/         harness, provider, trace, bench and dashboard tests (no API key needed)
+docs/          trace format, design notes and images
 ```
 
 ## Status and roadmap
 
-openRocode is **alpha**. It works today on one MuJoCo tabletop with a floating gripper: the core, both providers, pointing tools, `run_code`, operator controls, recording, replay and the dashboard.
+openRocode is **alpha**. It works today on one MuJoCo tabletop with a floating gripper: the core, both providers, pointing tools, `run_code`, operator controls, traces, batch comparison, replay and the dashboard.
 
 Known limits:
 
 - No arm kinematics yet: the gripper floats, so reachability and joint limits are not modelled.
 - `run_code` runs in a separate interpreter with call and time budgets, but it is not a security sandbox.
-- No batch evaluation yet; one `rocode run` is one episode.
+- Four tasks on one scene. Seeds move the objects a few centimetres; they do not change the scene.
 
 Next:
 
-1. Batch evaluation across tasks, seeds and models.
-2. A second body (LIBERO) to prove the body contract.
+1. A second body (LIBERO) to prove the body contract, with its tasks in `rocode bench`.
+2. Export traces to OpenTelemetry, so Langfuse, Phoenix and other LLM observability tools can show them.
 3. A Python SDK, and an MCP server so Claude Code, pi and other agents can drive a robot directly.
 4. A simulated arm with real kinematics, then a first real-robot adapter.
 5. A hard real-time safety loop beside physical robots.
@@ -239,6 +267,7 @@ openRocode is early, and focused contributions change a lot. Good places to star
 | Support another model API | `rocode/providers/` | [Add a provider](CONTRIBUTING.md#add-a-model-provider) |
 | Add a capability or tool | `rocode/ext/` | [Rules the harness depends on](CONTRIBUTING.md#rules-the-harness-depends-on) |
 | Improve the dashboard | `rocode/view/static/` | [DESIGN.md](DESIGN.md) |
+| Build tools on recorded runs | `rocode/trace.py` | [Trace format](docs/trace-format.md) |
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before your first pull request: it covers setup, the five rules every change keeps, and what a pull request needs. Issues labelled [`good first issue`](https://github.com/wrencanfly/openRocode/labels/good%20first%20issue) are ready to pick up. Tests need no API key.
 

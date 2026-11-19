@@ -9,7 +9,7 @@ git clone https://github.com/wrencanfly/openRocode.git
 cd openRocode
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[sim,agent,openai,dev]'
-pytest            # 28 tests, about 5 seconds, no API key
+pytest            # 40 tests, about 8 seconds, no API key
 rocode demo       # a scripted episode end to end
 ```
 
@@ -25,15 +25,18 @@ Please keep these true in every change. Reviews check them first.
 4. **Safety does not depend on the model.** Every motion goes through a `Guard` and the body's workspace check. Programs from `run_code` go through the same hooks as direct calls.
 5. **The core stays small.** `rocode/core/` knows no robots and no vendors. New capabilities belong in an extension (`rocode/ext/`), a provider, or a body.
 
+Changes to events are changes to the [trace format](docs/trace-format.md), which other tools read. Adding an event or a field is fine: document it there (a test checks). Renaming, removing or changing the meaning of one needs `TRACE_VERSION` bumped in `rocode/core/events.py`.
+
 ## Common contributions
 
 ### Add a robot or simulator (a body)
 
-Implement the `Body` protocol in `rocode/body/base.py`: `info`, `observe`, `move`, `rotate`, `grip`, `stop`, `reset` and `ground_truth`. Use `rocode/body/mujoco_tabletop.py` as the reference.
+Implement the `Body` protocol in `rocode/body/base.py`: `info`, `observe`, `move`, `rotate`, `grip`, `stop`, `reset`, `ground_truth` and `close`. Use `rocode/body/mujoco_tabletop.py` as the reference.
 
 - `observe` returns RGB images, depth when you have it, and a `CameraModel` per camera. The pointing tools need depth and calibration to turn a click into a 3D target.
 - `move` must stop on contact above `guard.max_force_n` (measured relative to the start of the motion), check `cancel` every control period, and return an honest `Receipt`.
 - `ground_truth` is for scoring only. Nothing the model sees may call it.
+- `close` frees renderers and connections. Whoever creates a body closes it, on the creating thread: a MuJoCo renderer left to the garbage collector can be freed on a dashboard thread, which deadlocks on macOS.
 
 Add a test that runs the scripted demo, or an equivalent script, against your body.
 
@@ -49,8 +52,8 @@ Implement `Provider` from `rocode/providers/base.py`: one `complete(request) -> 
 
 Issues labelled [`good first issue`](https://github.com/wrencanfly/openRocode/labels/good%20first%20issue) and [`help wanted`](https://github.com/wrencanfly/openRocode/labels/help%20wanted) are ready to pick up. Bigger items on the roadmap:
 
-- a batch runner for tasks × seeds × models, with a results table in the dashboard
 - a LIBERO body, the second body behind the same contract
+- an OpenTelemetry exporter for traces, so LLM observability tools (Langfuse, Phoenix) can show them
 - an MCP server, so Claude Code, pi and other agents can drive a robot
 - a simulated arm with real kinematics
 - more tasks, and a Gemini provider
