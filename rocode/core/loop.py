@@ -188,7 +188,7 @@ class Agent:
                 return end("error", str(err))
             usage.add(reply.usage)
             self.bus.emit(AssistantReply(turns, reply.text, [vars(c) for c in reply.tool_calls], vars(reply.usage),
-                                         reply.stop_reason))
+                                         reply.stop_reason, reply.reasoning))
             if reply.stop_reason == "refusal":
                 return end("refusal")
             self.messages.append(AssistantMessage(reply.text, reply.tool_calls, reply.raw, self.provider.name))

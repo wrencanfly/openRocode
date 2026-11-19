@@ -6,9 +6,11 @@ so a viewer in another process sees a live run by re-reading its directory.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
+
+from ..trace import read_events as _events
+from ..trace import read_json as _json
 
 EPISODE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,200}$")
 IMAGE_NAME = re.compile(r"^o\d+_[A-Za-z0-9_-]+\.png$")
@@ -20,23 +22,6 @@ def episode_dir(root: Path, episode_id: str) -> Path | None:
         return None
     d = root / episode_id
     return d if (d / "episode.jsonl").is_file() else None
-
-
-def _events(d: Path) -> list[dict]:
-    out = []
-    for line in (d / "episode.jsonl").read_text().splitlines():
-        try:
-            out.append(json.loads(line))
-        except json.JSONDecodeError:
-            break  # a line still being written by a live run
-    return out
-
-
-def _json(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
 
 
 def _status(start: dict, end: dict | None, evaluation: dict) -> str:
@@ -77,8 +62,12 @@ def summarize(d: Path) -> dict | None:
         "model": cfg.get("model", ""),
         "provider": cfg.get("provider", ""),
         "policy": cfg.get("policy"),
+        "seed": cfg.get("seed"),
+        "batch": cfg.get("batch"),
         "started": start.get("t"),
         "status": _status(start, end, evaluation),
+        "reason": (end or {}).get("reason"),
+        "claimed": evaluation.get("claimed"),
         "live": end is None,
         "turns": stats.get("turns", turns),
         "steps": stats.get("steps"),
@@ -126,6 +115,7 @@ def load_episode(root: Path, episode_id: str) -> dict | None:
             turns.append({"turn": e["turn"], "t": rel(e["t"]), "text": "", "calls": [], "notes": []})
         elif kind == "AssistantReply" and turns:
             turns[-1]["text"] = e.get("text", "")
+            turns[-1]["reasoning"] = e.get("reasoning", "")
             turns[-1]["usage"] = e.get("usage", {})
         elif kind == "ToolStart":
             call = {"id": e["call_id"], "name": e["name"], "args": e.get("args", {}), "t": rel(e["t"]), "children": []}

@@ -14,9 +14,10 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from ..core.control import ControlChannel
+from .compare import BATCH_ID, compare, load_manifests
 from .episodes import IMAGE_NAME, episode_dir, list_episodes, load_episode
 
 STATIC = {"app.js": "text/javascript; charset=utf-8", "app.css": "text/css; charset=utf-8"}
@@ -111,7 +112,14 @@ def _make_handler(viewer: ViewerServer):
             self._send(status, json.dumps(payload, default=str).encode(), "application/json")
 
         def do_GET(self):  # noqa: N802
-            path = unquote(urlparse(self.path).path)
+            url = urlparse(self.path)
+            path = unquote(url.path)
+            if path == "/api/compare":
+                batch = (parse_qs(url.query).get("batch") or [""])[0] or None
+                if batch is not None and not BATCH_ID.match(batch):
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid batch id."})
+                return self._json(HTTPStatus.OK, compare(list_episodes(viewer.root), load_manifests(viewer.root),
+                                                         batch))
             if path in ("/", "/index.html"):
                 page = _asset("index.html").decode()
                 page = page.replace("{{TOKEN}}", viewer.token).replace("{{LIVE}}", viewer.live_id or "")

@@ -42,7 +42,9 @@ class AnthropicProvider:
         u = response.usage
         usage = Usage(u.input_tokens or 0, u.output_tokens or 0,
                       getattr(u, "cache_read_input_tokens", 0) or 0, getattr(u, "cache_creation_input_tokens", 0) or 0)
-        return Reply(text, calls, response.stop_reason or "", response.content, usage, getattr(response, "model", ""))
+        reasoning = "\n".join(getattr(b, "thinking", "") or "" for b in response.content if b.type == "thinking").strip()
+        return Reply(text, calls, response.stop_reason or "", response.content, usage, getattr(response, "model", ""),
+                     reasoning)
 
     def build_params(self, request: Request) -> dict:
         betas: list[str] = []

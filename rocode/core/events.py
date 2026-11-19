@@ -2,6 +2,9 @@
 
 Subscribers observe; they cannot change control flow (that is what hooks are for). A subscriber that
 raises is reported once and then ignored, so a broken UI can never stop a robot mid-motion.
+
+These events, written one per line, are the trace format documented in docs/trace-format.md. Adding an
+event type or a field keeps TRACE_VERSION; renaming, removing or changing the meaning of one bumps it.
 """
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any
+
+TRACE_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -30,6 +35,7 @@ class Event:
 class EpisodeStart(Event):
     task: str
     config: dict
+    version: int = TRACE_VERSION
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,7 @@ class AssistantReply(Event):
     tool_calls: list[dict]
     usage: dict
     stop_reason: str
+    reasoning: str = ""
 
 
 @dataclass(frozen=True)

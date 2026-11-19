@@ -53,6 +53,7 @@ class Reply:
     raw: object = field(default=None, repr=False)   # replayed verbatim by the same provider
     usage: Usage = field(default_factory=Usage)
     model: str = ""
+    reasoning: str = ""         # the model's thinking or its summary, when the provider returns it; display only
 
 
 class ProviderError(RuntimeError):

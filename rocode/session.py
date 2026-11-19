@@ -39,8 +39,10 @@ class SessionConfig:
     max_steps: int = 60
     max_seconds: float = 1800.0
     keep_image_turns: int | None = None    # trim images older than this many tool results
-    seed: int | None = None
+    seed: int | None = None                # None: the default layout; an int jitters object positions
     out_dir: Path | None = None
+    batch: str | None = None               # set by `rocode bench` so the dashboard can compare episodes
+    reasoning: bool = False                # openai provider: send reasoning_effort, ask for reasoning summaries
 
 
 @dataclass
@@ -60,15 +62,22 @@ def make_provider(cfg: SessionConfig) -> Provider:
     if cfg.provider == "openai":
         from .providers.openai_compat import OpenAICompatProvider
 
-        return OpenAICompatProvider(cfg.model, base_url=cfg.base_url)
+        return OpenAICompatProvider(cfg.model, base_url=cfg.base_url, send_reasoning_effort=cfg.reasoning,
+                                    reasoning_summary=cfg.reasoning)
     raise ValueError(f"unknown provider {cfg.provider!r} (expected anthropic or openai)")
 
 
 def run_session(cfg: SessionConfig, provider: Provider | None = None, control: ControlChannel | None = None,
                 subscribers: list[Callable[[Event], None]] = (), extra_extensions: list[Extension] = (),
                 body: Body | None = None) -> SessionReport:
+    """Run one episode. A body passed in stays open for the caller; one created here is closed here."""
+    if body is None:
+        body = MujocoTabletop(seed=cfg.seed)
+        try:
+            return run_session(cfg, provider, control, subscribers, extra_extensions, body)
+        finally:
+            body.close()
     task = TASKS[cfg.task]
-    body = body or MujocoTabletop(seed=cfg.seed)
     cameras = body.info().cameras
     pointing = Pointing(cameras, expose_motion=cfg.policy != "code")
     extensions: list[Extension] = [SafetyGate(), pointing]
@@ -92,7 +101,8 @@ def run_session(cfg: SessionConfig, provider: Provider | None = None, control: C
 
     # The first look goes through the normal tool path so recordings and viewers see it like any other step.
     first_look = lambda: agent.run_tool(ToolCall("initial_look", "look", {})).content  # noqa: E731
-    meta = {"task_id": task.id, "body": body.info().name, "policy": cfg.policy}
+    meta = {"task_id": task.id, "body": body.info().name, "policy": cfg.policy, "seed": cfg.seed,
+            "batch": cfg.batch}
     outcome = agent.run(task.instruction, first_look, meta)
     truth = body.ground_truth()
     success = task.check(truth)
