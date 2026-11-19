@@ -21,7 +21,7 @@ from .body.base import Body
 from .core.control import ControlChannel
 from .providers.base import Provider
 from .session import SessionConfig, make_provider, run_session
-from .tasks import TASKS
+from .tasks import Task, get as get_task
 from .view.compare import BATCH_ID, load_manifests  # noqa: F401 - re-exported for callers of the bench API
 from .view.episodes import summarize
 
@@ -53,7 +53,7 @@ class ModelSpec:
 
 @dataclass
 class BenchPlan:
-    tasks: list[str]
+    tasks: list[str | Task]               # ids of built-in tasks, or Tasks (from task files)
     models: list[ModelSpec]
     seeds: list[int | None] = field(default_factory=lambda: [None])
     policy: str = "both"
@@ -65,18 +65,23 @@ class BenchPlan:
     reasoning: bool = False               # openai: models: send reasoning_effort, record reasoning summaries
 
     def __post_init__(self) -> None:
-        unknown = [t for t in self.tasks if t not in TASKS]
-        if unknown:
-            raise ValueError(f"unknown task(s): {', '.join(unknown)}")
+        self.tasks = [get_task(t) for t in self.tasks]
+        ungraded = [t.id for t in self.tasks if not t.graded]
+        if ungraded:
+            raise ValueError(f"a bench compares scores, but {', '.join(ungraded)} has no success check")
+        ids = [t.id for t in self.tasks]
+        if len(set(ids)) != len(ids):
+            raise ValueError("each task may appear once in a bench")
         if not self.tasks or not self.models or not self.seeds:
             raise ValueError("a bench needs at least one task, one model and one seed")
 
-    def cells(self) -> list[tuple[int | None, str, ModelSpec]]:
+    def cells(self) -> list[tuple[int | None, Task, ModelSpec]]:
         """Seed-major order, so a batch stopped early still covers every model about equally."""
         return [(seed, task, m) for seed in self.seeds for task in self.tasks for m in self.models]
 
     def to_dict(self) -> dict:
-        return {"tasks": self.tasks, "models": [str(m) for m in self.models], "seeds": self.seeds,
+        return {"tasks": [t.id for t in self.tasks], "task_sources": {t.id: t.source for t in self.tasks},
+                "models": [str(m) for m in self.models], "seeds": self.seeds,
                 "policy": self.policy, "effort": self.effort, "max_steps": self.max_steps,
                 "max_seconds": self.max_seconds, "keep_image_turns": self.keep_image_turns,
                 "reasoning": self.reasoning}
@@ -113,7 +118,7 @@ class Bench:
         self.stopping = False
         self.manifest = {
             "version": 1, "id": self.id, "created": time.time(), "status": "running", "plan": plan.to_dict(),
-            "episodes": [{"id": episode_id(self.id, task, m, seed), "task": task, "provider": m.provider,
+            "episodes": [{"id": episode_id(self.id, task.id, m, seed), "task": task.id, "provider": m.provider,
                           "model": m.model, "seed": seed, "status": "pending"} for seed, task, m in plan.cells()],
         }
 
@@ -182,4 +187,4 @@ class Bench:
 def _default_body(cfg: SessionConfig) -> Body:
     from .body.mujoco_tabletop import MujocoTabletop
 
-    return MujocoTabletop(seed=cfg.seed)
+    return MujocoTabletop(seed=cfg.seed, scene=get_task(cfg.task).scene)

@@ -1,0 +1,53 @@
+# Three blocks, a tray and a pad. Multi-step tasks: one misplaced block fails the whole check.
+#
+#   rocode preview examples/tasks/sorting.toml
+#   rocode run sort_blocks --task-file examples/tasks/sorting.toml
+#   rocode bench sort_blocks stack_three --task-file examples/tasks/sorting.toml --repeat 5 --model ...
+
+[[object]]
+name = "tray"
+shape = "box"
+size_cm = [16, 12, 0.6]
+color = "white"
+at_cm = [-18, -8]
+fixed = true
+
+[[object]]
+name = "pad"
+shape = "box"
+size_cm = [10, 10, 0.6]
+color = "green"
+at_cm = [20, -14]
+fixed = true
+
+[[object]]
+name = "red_block"
+shape = "box"
+size_cm = 4
+color = "red"
+at_cm = [-8, 12]
+
+[[object]]
+name = "green_block"
+shape = "box"
+size_cm = 4
+color = "green"
+at_cm = [6, 14]
+
+[[object]]
+name = "blue_block"
+shape = "box"
+size_cm = 4
+color = "blue"
+at_cm = [18, 8]
+
+[[task]]
+id = "sort_blocks"
+instruction = "Put the red and blue blocks on the white tray and the green block on the green pad."
+success = "on(red_block, tray) and on(blue_block, tray) and on(green_block, pad)"
+
+[[task]]
+id = "stack_three"
+instruction = """Stack the three blocks into one tower on the table: green at the bottom, \
+blue in the middle, red on top. Let go of the top block when you are done."""
+success = "on(green_block, table) and on(blue_block, green_block) and on(red_block, blue_block)"

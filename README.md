@@ -41,7 +41,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e '.[sim,agent,openai,dev]'
 
 rocode demo        # a scripted episode, no API key: checks your install
-pytest             # 40 tests, about 8 seconds, no API key
+pytest             # 79 tests, about 12 seconds, no API key
 ```
 
 Then give a model the arm, and watch it in the dashboard:
@@ -57,6 +57,14 @@ rocode run mug_to_coaster --view --provider openai --model claude-opus-5-5
 ```
 
 `rocode tasks` lists the tasks. `rocode view` browses every recorded episode. `rocode replay runs/<episode>` prints one in the terminal.
+
+Give it your own task, typed or from a file:
+
+```bash
+rocode run "Push the blue block to the left edge of the table" --view     # recorded, not graded
+rocode preview examples/tasks/sorting.toml                                 # see the scene first, no model call
+rocode run sort_blocks --task-file examples/tasks/sorting.toml --view
+```
 
 Compare models on the same tasks, with several object layouts each:
 
@@ -94,6 +102,34 @@ Every motion is force-guarded and workspace-checked by the body. Physical action
 ### Any model, one harness
 
 Claude through the Anthropic API, or any OpenAI-compatible endpoint. History is append-only, so prompt caches stay warm and Claude's thinking blocks stay valid. Swap the model with a flag; nothing else changes. On OpenAI-compatible endpoints, `--reasoning` also sends `--effort` as `reasoning_effort` and records the model's reasoning summary.
+
+### Any task, written as data
+
+A task is a scene, an instruction and a success check, in a short TOML file. Built-in tasks use the same format, so your tasks get everything they get: the dashboard, `rocode bench`, the Compare page and traces.
+
+```toml
+[[object]]
+name = "tray"
+shape = "box"
+size_cm = [16, 12, 0.6]
+color = "white"
+at_cm = [-18, -8]
+fixed = true
+
+[[object]]
+name = "red_block"
+shape = "box"
+size_cm = 4
+color = "red"
+at_cm = [-8, 12]
+
+[[task]]
+id = "red_to_tray"
+instruction = "Put the red block on the white tray."
+success = "on(red_block, tray)"
+```
+
+The success check is an expression over the simulator's final state (`on`, `held`, `upright`, `height_cm`, `distance_cm`, …), checked when the file loads and judged part by part, so a failed episode says which condition failed and by how much. Python files can define checks as functions. The whole task is recorded in every trace. Format: [docs/tasks.md](docs/tasks.md). Examples: [`examples/tasks/`](examples/tasks/), with look-alike objects, sorting and a three-block tower.
 
 ### Every run is a trace
 
@@ -202,9 +238,11 @@ print(r.holding, r.opening_cm, r.height_cm, r.stop)
 
 Design notes: [docs/design.md](docs/design.md) (goals and scope) and [docs/core-design.md](docs/core-design.md) (internals). The dashboard follows [DESIGN.md](DESIGN.md).
 
-## Results so far
+## Smoke test
 
-`rocode bench mug_to_coaster --repeat 3` with three models, through an OpenAI-compatible proxy at each model's default reasoning effort. Every episode was judged by the simulator's ground truth. Nine runs are a small sample, not a leaderboard.
+These runs show that the loop works end to end with each model. They do not rank models: the task is easy and every run succeeded. A suite with harder tasks is next; `examples/tasks/` is its start.
+
+`rocode bench mug_to_coaster --repeat 3` with three models, through an OpenAI-compatible proxy at each model's default reasoning effort. Every episode was judged by the simulator's ground truth.
 
 | Model | Succeeded | Median turns | Median time | Mean input tokens |
 |---|---|---|---|---|
@@ -232,24 +270,27 @@ rocode/
   body/        base.py (the body contract), mujoco_tabletop.py
   ext/         pointing.py, code.py (run_code), safety.py, recorder.py
   view/        the dashboard: episodes.py, compare.py, server.py, static/
-  session.py   bench.py   trace.py   tasks.py   cli.py   demo.py
-tests/         harness, provider, trace, bench and dashboard tests (no API key needed)
-docs/          trace format, design notes and images
+  scene.py     objects on the table; checks.py, success expressions; tasks.py, tasks and task files
+  session.py   bench.py   trace.py   cli.py   demo.py
+examples/tasks/  task files: look-alike objects, sorting, stacking
+tests/         harness, task, provider, trace, bench and dashboard tests (no API key needed)
+docs/          task format, trace format, design notes and images
 ```
 
 ## Status and roadmap
 
-openRocode is **alpha**. It works today on one MuJoCo tabletop with a floating gripper: the core, both providers, pointing tools, `run_code`, operator controls, traces, batch comparison, replay and the dashboard.
+openRocode is **alpha**. It works today on one MuJoCo tabletop with a floating gripper: the core, both providers, pointing tools, `run_code`, operator controls, task files, traces, batch comparison, replay and the dashboard.
 
 Known limits:
 
 - No arm kinematics yet: the gripper floats, so reachability and joint limits are not modelled.
 - `run_code` runs in a separate interpreter with call and time budgets, but it is not a security sandbox.
-- Four tasks on one scene. Seeds move the objects a few centimetres; they do not change the scene.
+- One body: a tabletop with boxes, cylinders, spheres and mugs. No meshes or articulated objects (drawers, doors) yet.
+- Success is judged on the final state only, not on how the robot got there.
 
 Next:
 
-1. A second body (LIBERO) to prove the body contract, with its tasks in `rocode bench`.
+1. A harder task suite with published results, including failures. Then a second body (LIBERO) to prove the body contract, with its tasks in `rocode bench`.
 2. Export traces to OpenTelemetry, so Langfuse, Phoenix and other LLM observability tools can show them.
 3. A Python SDK, and an MCP server so Claude Code, pi and other agents can drive a robot directly.
 4. A simulated arm with real kinematics, then a first real-robot adapter.
@@ -263,7 +304,7 @@ openRocode is early, and focused contributions change a lot. Good places to star
 | You want to | Start in | Guide |
 |---|---|---|
 | Connect a robot or simulator | `rocode/body/` | [Add a body](CONTRIBUTING.md#add-a-robot-or-simulator-a-body) |
-| Add a task | `rocode/tasks.py` | [Add a task](CONTRIBUTING.md#add-a-task) |
+| Add a task | a `.toml` file | [docs/tasks.md](docs/tasks.md) |
 | Support another model API | `rocode/providers/` | [Add a provider](CONTRIBUTING.md#add-a-model-provider) |
 | Add a capability or tool | `rocode/ext/` | [Rules the harness depends on](CONTRIBUTING.md#rules-the-harness-depends-on) |
 | Improve the dashboard | `rocode/view/static/` | [DESIGN.md](DESIGN.md) |

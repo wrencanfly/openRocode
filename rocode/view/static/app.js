@@ -27,7 +27,7 @@ const MODELS = { "claude-opus-5-5": "Claude Opus 5.5", "claude-sonnet-5-5": "Cla
                  "claude-fable-5-2": "Claude Fable 5.2", "claude-opus-5": "Claude Opus 5", "claude-sonnet-5": "Claude Sonnet 5",
                  "gpt-6.1-sol": "GPT-6.1 Sol", "gpt-6-luna": "GPT-6 Luna", "scripted": "Scripted demo" };
 const STATUS = { running: ["live", "Running"], succeeded: ["ok", "Succeeded"], failed: ["err", "Failed"], error: ["err", "Error"],
-                 stopped: ["warn", "Stopped"], ended: ["", "Ended"] };
+                 stopped: ["warn", "Stopped"], ended: ["", "Ended"], ungraded: ["", "Not graded"] };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const modelName = (m) => MODELS[m] || m || "Unknown model";
@@ -152,7 +152,7 @@ async function openHome() {
 
 /* ---- compare: task x model matrix ---------------------------------------------------------- */
 
-const DOT = { succeeded: "ok", failed: "err", error: "warn", stopped: "warn", ended: "", running: "live", pending: "pending" };
+const DOT = { succeeded: "ok", failed: "err", error: "warn", stopped: "warn", ended: "", ungraded: "", running: "live", pending: "pending" };
 const pct = (r) => (r == null ? "–" : `${Math.round(r * 100)}%`);
 const seedName = (s) => (s == null ? "default layout" : `seed ${s}`);
 
@@ -170,7 +170,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 function matrixCell(cell) {
   if (!cell) return `<td class="none">–</td>`;
   const waiting = cell.pending + cell.running;
-  const aside = [cell.errors && plural(cell.errors, "error"), cell.stopped && `${cell.stopped} stopped`, waiting && `${waiting} to run`]
+  const aside = [cell.errors && plural(cell.errors, "error"), cell.stopped && `${cell.stopped} stopped`, cell.ungraded && `${cell.ungraded} not graded`, waiting && `${waiting} to run`]
     .filter(Boolean).map((s) => `<span>${s}</span>`).join("");
   const meta = cell.scored
     ? `<span>${plural(cell.turns_median, "turn")}</span><span>${fmtTime(cell.seconds_median)}</span><span>${fmtTokens(cell.tokens_in_mean)} tokens in</span>`
@@ -478,8 +478,9 @@ function updateDebug() {
     html += `<div class="finish"><div class="card err"><b style="color:var(--error)">The episode ended with an error</b><p class="body" style="margin:6px 0 0">${esc(ep.error)}</p></div></div>`;
   } else if (!ep.live) {
     const claim = ep.finish ? `The model said: ${esc(ep.finish.summary)}` : `Ended by ${esc(ep.reason || "unknown")}.`;
+    const judge = ep.status === "ungraded" ? "this task has no success check" : "according to the simulator";
     html += `<div class="finish"><div class="card"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="dot ${cls}"></span><b>${label}</b>
-      <span class="mute">according to the simulator</span></div><p class="body" style="margin:0">${claim}</p></div></div>`;
+      <span class="mute">${judge}</span></div><p class="body" style="margin:0">${claim}</p>${checkList(ep)}</div></div>`;
   }
   tl.innerHTML = html;
   tl.scrollTop = scroll;
@@ -505,6 +506,15 @@ function updateDebug() {
   $$("#ticks button").forEach((b) => (b.onclick = () => go(+b.dataset.i)));
   const ticks = $("#ticks"), tick = $(`#ticks button[data-i="${view.idx}"]`);
   if (tick) ticks.scrollLeft = Math.max(0, tick.offsetLeft - ticks.offsetLeft - (ticks.clientWidth - tick.offsetWidth) / 2);
+}
+
+function checkList(ep) {
+  if (!ep.clauses || !ep.clauses.length) return ep.check ? `<p class="check-src">Success check <code>${esc(ep.check)}</code></p>` : "";
+  const val = (v) => (typeof v === "boolean" ? (v ? "yes" : "no") : v);
+  return `<ul class="checks" aria-label="Success check">${ep.clauses.map((c) => {
+    const vals = Object.entries(c.values || {}).filter(([k, v]) => typeof v !== "boolean" || k !== c.expr);
+    return `<li class="${c.ok ? "ok" : "no"}"><span class="mark" aria-label="${c.ok ? "held" : "failed"}">${c.ok ? "✓" : "✗"}</span><code>${esc(c.expr)}</code>${vals.length ? `<span class="mute">${vals.map(([k, v]) => `${esc(k)} = ${esc(val(v))}`).join(", ")}</span>` : ""}</li>`;
+  }).join("")}</ul>`;
 }
 
 /* ---- watch mode ---------------------------------------------------------------------------- */

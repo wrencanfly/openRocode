@@ -53,7 +53,7 @@ Every line of `episode.jsonl` is an object with a `type` naming one of the event
 The first event.
 
 - `task`: the instruction given to the model, in plain language.
-- `config`: how the episode was set up. Always `provider`, `model`, `effort`, `tools` (names the model may call directly) and `budget` (`max_steps`, `max_turns`, `max_seconds`). Sessions also add `task_id`, `body`, `policy` (`tools`, `code` or `both`), `seed` (null for the default layout) and `batch` (the `rocode bench` batch id, or null).
+- `config`: how the episode was set up. Always `provider`, `model`, `effort`, `tools` (names the model may call directly) and `budget` (`max_steps`, `max_turns`, `max_seconds`). Sessions also add `task_id`, `body`, `policy` (`tools`, `code` or `both`), `seed` (null for the default layout), `batch` (the `rocode bench` batch id, or null) and `task_spec`: the whole task as it was run, with `id`, `instruction`, `success` (the success expression, `python:<function>`, or null for an ungraded task), `source` (`builtin`, the task file's path, or `inline` for an instruction typed on the command line) and `scene` (`objects`, each as written in a task file, in centimetres; see [tasks.md](tasks.md)).
 - `version`: the trace format version.
 
 ### TurnStart
@@ -148,11 +148,14 @@ The last event. The same content is written to `result.json`.
 Written by the session after the episode, from the simulator's ground truth:
 
 - `task`: the task id.
-- `success`: whether the task's check passed. This is the verdict the dashboard and `rocode bench` report.
+- `graded`: false for a task with no success check.
+- `success`: whether the task's check passed, or null if it is not graded. This is the verdict the dashboard and `rocode bench` report.
+- `check`: the success expression, `python:<function>`, or null.
+- `clauses`: for an expression, one entry per part joined by a top-level `and`: `expr`, `ok`, and `values`, every predicate and measurement it read (`{"height_cm(block)": 6.4}`).
 - `claimed`: what the model said in `done` (`true`, `false`, or null if it never called `done`).
-- `ground_truth`: the simulator's final state, in metres in the world frame (for MuJoCo: `objects`, `held`, `tcp`).
+- `ground_truth`: the simulator's final state, in metres in the world frame (for MuJoCo: `objects`, every object's centre; `tilt_deg`, how far each loose object leans; `held`; `tcp`).
 - `config`: the full session config.
 
 ## Batches
 
-`rocode bench` also writes `runs/batches/<batch id>.json`: the plan (`tasks`, `models`, `seeds`, `policy`, …) and one entry per planned episode with its `id`, `task`, `provider`, `model`, `seed` and `status` (`pending`, `running`, `succeeded`, `failed`, `error`, `stopped` or `ended`). An episode that could not start (for example, a missing API key) has `status` `error`, an `error` message, and no trace directory.
+`rocode bench` also writes `runs/batches/<batch id>.json`: the plan (`tasks`, `task_sources` (where each task was defined), `models`, `seeds`, `policy`, …) and one entry per planned episode with its `id`, `task`, `provider`, `model`, `seed` and `status` (`pending`, `running`, `succeeded`, `failed`, `error`, `stopped` or `ended`). An episode that could not start (for example, a missing API key) has `status` `error`, an `error` message, and no trace directory.
