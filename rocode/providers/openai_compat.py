@@ -1,8 +1,12 @@
 """Any OpenAI-compatible Chat Completions endpoint: OpenAI, Qwen, DeepSeek, a local vLLM server.
 
 Chat Completions tool messages carry text only, so a turn's images go in one user message placed right
-after its tool messages, labelled with the call they belong to. There are no bound thinking blocks
-here, so the context policy is applied client-side by replacing old images with a short note.
+after its tool messages, labelled with the call they belong to. The context policy is applied client-side by
+replacing old images with a short note.
+
+With reasoning on, the request asks for `reasoning_effort` and a reasoning summary, which reasoning models and
+proxies such as LiteLLM understand. The summary is recorded for people to read. Thinking blocks a proxy returns
+for Claude are replayed with their assistant turn, as Anthropic requires when tools are used.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ class OpenAICompatProvider:
     name = "openai"
 
     def __init__(self, model: str, base_url: str | None = None, api_key: str | None = None,
-                 send_reasoning_effort: bool = False, client=None):
+                 send_reasoning_effort: bool = False, reasoning_summary: bool = False, client=None):
         if client is None:
             import openai
 
@@ -29,13 +33,23 @@ class OpenAICompatProvider:
         self.client = client
         self.model = model
         self.send_reasoning_effort = send_reasoning_effort
+        self.reasoning_summary = reasoning_summary
 
     def complete(self, request: Request) -> Reply:
         params = self.build_params(request)
         try:
             response = self.client.chat.completions.create(**params)
         except Exception as err:
-            raise ProviderError(f"{type(err).__name__}: {err}") from err
+            # Some servers (Claude behind Bedrock, plain vLLM) reject the summary request. It only changes what we
+            # record, and no tool has run yet, so ask again without it and stop asking for this episode.
+            if "extra_body" not in params or "reasoning" not in str(err):
+                raise ProviderError(f"{type(err).__name__}: {err}") from err
+            self.reasoning_summary = False
+            params.pop("extra_body")
+            try:
+                response = self.client.chat.completions.create(**params)
+            except Exception as err2:
+                raise ProviderError(f"{type(err2).__name__}: {err2}") from err2
         choice = response.choices[0]
         msg = choice.message
         calls = []
@@ -48,8 +62,11 @@ class OpenAICompatProvider:
         u = response.usage
         cached = getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0) or 0 if u else 0
         usage = Usage(getattr(u, "prompt_tokens", 0) or 0, getattr(u, "completion_tokens", 0) or 0, cached, 0)
+        blocks = getattr(msg, "thinking_blocks", None)
+        reasoning = getattr(msg, "reasoning_content", None) or ""
         return Reply(msg.content or "", tuple(calls), FINISH.get(choice.finish_reason, choice.finish_reason or ""),
-                     None, usage, getattr(response, "model", ""))
+                     {"thinking_blocks": blocks} if blocks else None, usage, getattr(response, "model", ""),
+                     reasoning.strip() if isinstance(reasoning, str) else "")
 
     def build_params(self, request: Request) -> dict:
         params = {
@@ -61,6 +78,8 @@ class OpenAICompatProvider:
         }
         if self.send_reasoning_effort:
             params["reasoning_effort"] = request.effort
+        if self.reasoning_summary:
+            params["extra_body"] = {"reasoning": {"summary": "auto"}}
         return params
 
     def render(self, request: Request) -> list[dict]:
@@ -76,6 +95,8 @@ class OpenAICompatProvider:
                 out.append({"role": "user", "content": f"Operator says: {m.text}"})
             elif isinstance(m, AssistantMessage):
                 entry: dict = {"role": "assistant", "content": m.text or None}
+                if isinstance(m.raw, dict) and m.raw.get("thinking_blocks"):
+                    entry["thinking_blocks"] = m.raw["thinking_blocks"]   # replayed as returned
                 if m.tool_calls:
                     entry["tool_calls"] = [{"id": c.id, "type": "function",
                                             "function": {"name": c.name, "arguments": json.dumps(c.args)}}

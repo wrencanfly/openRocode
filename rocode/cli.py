@@ -1,4 +1,4 @@
-"""Command line: `rocode run`, `rocode demo`, `rocode tasks`, `rocode replay`."""
+"""Command line: `rocode run`, `rocode bench`, `rocode demo`, `rocode view`, `rocode tasks`, `rocode replay`."""
 
 from __future__ import annotations
 
@@ -27,6 +27,10 @@ class ConsoleView:
         if isinstance(e, TurnStart):
             p(f"\n── turn {e.turn}")
         elif isinstance(e, AssistantReply):
+            if getattr(e, "reasoning", "").strip():
+                for line in e.reasoning.strip().splitlines()[:4]:
+                    if line.strip():
+                        p(f"   thinks: {line.strip()}")
             if e.text.strip():
                 for line in e.text.strip().splitlines()[:6]:
                     p(f"   model: {line}")
@@ -90,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--policy", default="both", choices=["tools", "code", "both"],
                      help="Act through direct tool calls, programs, or both.")
     run.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
+    run.add_argument("--reasoning", action="store_true",
+                     help="openai provider: send --effort as reasoning_effort and record the model's reasoning summary.")
     run.add_argument("--max-steps", type=int, default=60)
     run.add_argument("--keep-images", type=int, default=None, help="Trim pictures older than N tool results.")
     run.add_argument("--seed", type=int, default=None)
@@ -105,6 +111,27 @@ def main(argv: list[str] | None = None) -> int:
     view.add_argument("runs", type=Path, nargs="?", default=Path("runs"))
     view.add_argument("--port", type=int, default=8765)
     view.add_argument("--no-open", action="store_true", help="Print the address without opening a browser.")
+
+    bench = sub.add_parser("bench", help="Run tasks x models x seeds and compare them in the dashboard.")
+    bench.add_argument("tasks", nargs="+", choices=sorted(TASKS), metavar="TASK")
+    bench.add_argument("--model", dest="models", action="append", metavar="PROVIDER:MODEL",
+                       help="Repeat for each model, e.g. --model anthropic:claude-opus-5-5 --model openai:gpt-6.1-sol. "
+                            "Default: anthropic:claude-opus-5-5.")
+    bench.add_argument("--base-url", default=None, help="OpenAI-compatible server URL, used for every openai: model.")
+    bench.add_argument("--seeds", type=int, nargs="+", default=None, metavar="N",
+                       help="Seeds to run; each moves the objects a little. Default: the unjittered layout once.")
+    bench.add_argument("--repeat", type=int, default=None, metavar="K", help="Shorthand for --seeds 0 1 ... K-1.")
+    bench.add_argument("--policy", default="both", choices=["tools", "code", "both"])
+    bench.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
+    bench.add_argument("--reasoning", action="store_true",
+                       help="openai: models: send --effort as reasoning_effort and record reasoning summaries.")
+    bench.add_argument("--max-steps", type=int, default=60)
+    bench.add_argument("--keep-images", type=int, default=None)
+    bench.add_argument("--out", type=Path, default=Path("runs"))
+    bench.add_argument("--yes", action="store_true", help="Start without confirming the number of episodes.")
+    bench.add_argument("--view", action="store_true", help="Open the comparison page while the batch runs.")
+    bench.add_argument("--port", type=int, default=8765)
+    bench.add_argument("--no-open", action="store_true")
 
     sub.add_parser("tasks", help="List tasks.")
     rep = sub.add_parser("replay", help="Print a recorded episode.")
@@ -142,6 +169,9 @@ def main(argv: list[str] | None = None) -> int:
             server.shutdown()
         return 0
 
+    if args.cmd == "bench":
+        return bench_command(args, ap)
+
     if args.cmd == "demo":
         from .demo import scripted_demo
 
@@ -155,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     out = default_out_dir(args.out, args.task)
     cfg = SessionConfig(task=args.task, provider=args.provider, model=model, base_url=args.base_url,
                         policy=args.policy, effort=args.effort, max_steps=args.max_steps,
-                        keep_image_turns=args.keep_images, seed=args.seed, out_dir=out)
+                        keep_image_turns=args.keep_images, seed=args.seed, out_dir=out, reasoning=args.reasoning)
     control = ControlChannel()
     if sys.stdin.isatty():
         print("Type to talk to the model mid-run. /pause, /resume, /stop (emergency stop).")
@@ -177,6 +207,89 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             server.shutdown()
     return 0 if report.success else 1
+
+
+def bench_command(args, ap: argparse.ArgumentParser) -> int:
+    import signal
+
+    from .bench import Bench, BenchPlan, ModelSpec
+
+    try:
+        models = [ModelSpec.parse(m) for m in (args.models or ["anthropic:claude-opus-5-5"])]
+    except ValueError as err:
+        ap.error(str(err))
+    if args.seeds is not None and args.repeat is not None:
+        ap.error("use --seeds or --repeat, not both")
+    seeds = args.seeds if args.seeds is not None else list(range(args.repeat)) if args.repeat else [None]
+    plan = BenchPlan(tasks=list(dict.fromkeys(args.tasks)), models=models, seeds=seeds, policy=args.policy,
+                     effort=args.effort, max_steps=args.max_steps, keep_image_turns=args.keep_images,
+                     base_url=args.base_url, reasoning=args.reasoning)
+    n = len(plan.cells())
+    print(f"{n} episode(s): {len(plan.tasks)} task(s) x {len(models)} model(s) x {len(seeds)} seed(s). "
+          "Each one calls the model API.")
+    if not args.yes and sys.stdin.isatty() and input("Start? [y/N] ").strip().lower() not in ("y", "yes"):
+        return 1
+
+    def started(i, total, e):
+        seed = "default" if e["seed"] is None else e["seed"]
+        print(f"[{i}/{total}] {e['task']} · {e['model']} · seed {seed} …", end=" ", flush=True)
+
+    def finished(i, total, e):
+        if e["status"] == "error":
+            print(f"error: {e.get('error', '')}")
+        else:
+            print(f"{e['status']} in {e.get('turns')} turns, {e.get('seconds')} s")
+
+    bench = Bench(plan, args.out, on_start=started, on_done=finished)
+    server = None
+    if args.view:
+        from .view.server import ViewerServer
+
+        server = ViewerServer(args.out, port=args.port).start()
+        url = f"{server.url}#/compare?batch={bench.id}"
+        print(f"Comparison: {url}")
+        if not args.no_open:
+            webbrowser.open(url)
+
+    def interrupt(signum, frame):
+        if bench.stopping:
+            raise KeyboardInterrupt
+        print("\nStopping: emergency stop on the current episode, the rest are skipped. Ctrl-C again to quit now.")
+        bench.stop()
+
+    previous = signal.signal(signal.SIGINT, interrupt)
+    try:
+        manifest = bench.run()
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    print_bench_table(manifest)
+    print(f"Batch {bench.id}: {bench.manifest_path}")
+    if server is not None:
+        print(f"Dashboard still open at {server.url}#/compare?batch={bench.id} (Ctrl-C to quit)")
+        try:
+            threading.Event().wait()
+        except KeyboardInterrupt:
+            server.shutdown()
+    return 0
+
+
+def print_bench_table(manifest: dict) -> None:
+    from statistics import median
+
+    rows: dict[tuple[str, str], list[dict]] = {}
+    for e in manifest["episodes"]:
+        rows.setdefault((e["task"], e["model"]), []).append(e)
+    print(f"\n{'task':<20} {'model':<22} {'succeeded':>10} {'turns':>6} {'seconds':>8} {'tokens in':>10}  other")
+    for (task, model), eps in rows.items():
+        # Only episodes the model played to a verdict count; errors and stops are listed beside them.
+        done = [e for e in eps if e["status"] in ("succeeded", "failed", "ended")]
+        ok = sum(e["status"] == "succeeded" for e in done)
+        med = lambda k: median([e[k] for e in done if e.get(k) is not None] or [0])  # noqa: E731
+        tok = [(e.get("usage") or {}).get("input_tokens") or 0 for e in done]
+        other = ", ".join(f"{sum(e['status'] == s for e in eps)} {s}" for s in ("error", "stopped", "pending")
+                          if any(e["status"] == s for e in eps))
+        print(f"{task:<20} {model:<22} {f'{ok}/{len(done)}':>10} {med('turns'):>6} {med('seconds'):>8} "
+              f"{(round(sum(tok) / len(tok)) if tok else 0):>10}  {other}")
 
 
 if __name__ == "__main__":

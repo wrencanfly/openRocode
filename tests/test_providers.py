@@ -75,7 +75,7 @@ def test_anthropic_no_fallback_for_other_models():
 
 def test_anthropic_reply_parsing():
     response = SimpleNamespace(
-        content=[SimpleNamespace(type="thinking", thinking="", signature="s"),
+        content=[SimpleNamespace(type="thinking", thinking="The mug is left of the block.", signature="s"),
                  SimpleNamespace(type="text", text="Moving."),
                  SimpleNamespace(type="tool_use", id="t1", name="look", input={})],
         stop_reason="tool_use", model="claude-opus-5-5",
@@ -86,6 +86,7 @@ def test_anthropic_reply_parsing():
         Request("S", TOOLS, [UserMessage((Text("hi"),))], store_with(1)))
     assert reply.text == "Moving." and reply.tool_calls[0].name == "look"
     assert reply.raw is response.content and reply.usage.cache_read_tokens == 7
+    assert reply.reasoning == "The mug is left of the block."
 
 
 def test_openai_puts_images_after_tool_messages_and_trims_old_ones():
@@ -113,3 +114,44 @@ def test_openai_unparseable_arguments_become_a_validation_error():
         Request("S", TOOLS, [UserMessage((Text("hi"),))], store_with(1)))
     assert reply.stop_reason == "tool_use"
     assert reply.tool_calls[0].args == {"_unparseable_arguments": "{not json"}
+
+
+def test_openai_reasoning_is_recorded_and_claude_thinking_blocks_are_replayed():
+    blocks = [{"type": "thinking", "thinking": "Above the mug first.", "signature": "sig"}]
+    message = SimpleNamespace(content="Moving.", reasoning_content="Above the mug first.", thinking_blocks=blocks,
+                              tool_calls=[SimpleNamespace(id="t1", function=SimpleNamespace(name="look", arguments="{}"))])
+    response = SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="tool_calls")],
+                               usage=SimpleNamespace(prompt_tokens=3, completion_tokens=2, prompt_tokens_details=None))
+    sent = {}
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+        create=lambda **kw: sent.update(kw) or response)))
+    store = store_with(1)
+    p = OpenAICompatProvider("claude-opus-5-5", client=client, send_reasoning_effort=True, reasoning_summary=True)
+    reply = p.complete(Request("S", TOOLS, [UserMessage((Text("hi"),))], store, effort="high"))
+    assert sent["reasoning_effort"] == "high" and sent["extra_body"] == {"reasoning": {"summary": "auto"}}
+    assert reply.reasoning == "Above the mug first." and reply.raw == {"thinking_blocks": blocks}
+    msgs = p.render(Request("S", TOOLS, [UserMessage((Text("hi"),)),
+                                         AssistantMessage(reply.text, reply.tool_calls, reply.raw, "openai")], store))
+    assert msgs[2]["thinking_blocks"] == blocks
+    plain = OpenAICompatProvider("qwen", client=object()).build_params(Request("S", TOOLS, [], store))
+    assert "reasoning_effort" not in plain and "extra_body" not in plain   # off unless asked for
+
+
+def test_openai_drops_the_reasoning_summary_when_the_server_rejects_it():
+    message = SimpleNamespace(content="ok", tool_calls=[], reasoning_content="Thinking.")
+    response = SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason="stop")],
+                               usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1, prompt_tokens_details=None))
+    calls = []
+
+    def create(**kw):
+        calls.append(kw)
+        if "extra_body" in kw:
+            raise RuntimeError("400 reasoning: Extra inputs are not permitted")
+        return response
+
+    p = OpenAICompatProvider("claude-sonnet-5-5", client=SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create))), send_reasoning_effort=True, reasoning_summary=True)
+    req = Request("S", TOOLS, [UserMessage((Text("hi"),))], store_with(1))
+    assert p.complete(req).reasoning == "Thinking."
+    p.complete(req)
+    assert ["extra_body" in c for c in calls] == [True, False, False]   # asked once, then never again

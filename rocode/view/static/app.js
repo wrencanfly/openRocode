@@ -1,4 +1,5 @@
-/* openRocode dashboard: episodes table, and an episode view with Debug and Watch modes. No build step. */
+/* openRocode dashboard: episodes table, a task x model comparison, and an episode view with Debug and Watch
+   modes. No build step. */
 "use strict";
 
 const TOKEN = document.querySelector('meta[name="rocode-token"]').content;
@@ -99,6 +100,8 @@ function stopPolling() { clearInterval(poller); poller = null; }
 function route() {
   stopPolling(); stopPlay();
   const h = location.hash.slice(1) || "/";
+  const c = h.match(/^\/compare(?:\?(.*))?$/);
+  if (c) return openCompare(new URLSearchParams(c[1] || "").get("batch") || "");
   const m = h.match(/^\/e\/([^?]+)(?:\?(.*))?$/);
   if (m) {
     const q = new URLSearchParams(m[2] || "");
@@ -112,9 +115,16 @@ addEventListener("hashchange", route);
 
 /* ---- home: episodes table ------------------------------------------------------------------ */
 
+function sectionNav(current) {
+  $("#bar-right").innerHTML = `<div class="segmented" role="group" aria-label="Section">
+    <button data-go="#/" aria-pressed="${current === "episodes"}">Episodes</button>
+    <button data-go="#/compare" aria-pressed="${current === "compare"}">Compare</button></div>`;
+  $$("#bar-right [data-go]").forEach((b) => (b.onclick = () => { location.hash = b.dataset.go; }));
+}
+
 async function openHome() {
   $("#crumbs").innerHTML = `<span class="slash">/</span><span>Episodes</span>`;
-  $("#bar-right").innerHTML = "";
+  sectionNav("episodes");
   app.innerHTML = `<div class="home"><h1>Episodes</h1><p class="sub" id="home-sub">Loading…</p><div id="home-body"></div></div>`;
   const load = async () => {
     let data;
@@ -138,6 +148,83 @@ async function openHome() {
   };
   await load();
   poller = setInterval(load, 2500);
+}
+
+/* ---- compare: task x model matrix ---------------------------------------------------------- */
+
+const DOT = { succeeded: "ok", failed: "err", error: "warn", stopped: "warn", ended: "", running: "live", pending: "pending" };
+const pct = (r) => (r == null ? "–" : `${Math.round(r * 100)}%`);
+const seedName = (s) => (s == null ? "default layout" : `seed ${s}`);
+
+function runDots(cell) {
+  return `<div class="runs">${cell.episodes.map((e) => {
+    const label = `${seedName(e.seed)}: ${statusOf(e.status)[1] || e.status}${e.turns != null && e.status !== "pending" ? `, ${e.turns} turns` : ""}${e.why ? `. ${e.why}` : ""}`;
+    return e.has_trace
+      ? `<a class="run ${DOT[e.status] || ""}" href="#/e/${encodeURIComponent(e.id)}" title="${esc(label)}" aria-label="${esc(label)}"></a>`
+      : `<span class="run ${DOT[e.status] || ""}" title="${esc(label)}" aria-label="${esc(label)}"></span>`;
+  }).join("")}</div>`;
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function matrixCell(cell) {
+  if (!cell) return `<td class="none">–</td>`;
+  const waiting = cell.pending + cell.running;
+  const aside = [cell.errors && plural(cell.errors, "error"), cell.stopped && `${cell.stopped} stopped`, waiting && `${waiting} to run`]
+    .filter(Boolean).map((s) => `<span>${s}</span>`).join("");
+  const meta = cell.scored
+    ? `<span>${plural(cell.turns_median, "turn")}</span><span>${fmtTime(cell.seconds_median)}</span><span>${fmtTokens(cell.tokens_in_mean)} tokens in</span>`
+    : "";
+  const rate = cell.scored
+    ? `<b>${cell.succeeded}</b><span class="of">/${cell.scored}</span><span class="pct">${pct(cell.rate)}</span>`
+    : `<b class="none">–</b>`;
+  return `<td><div class="rate">${rate}</div>
+    <div class="meter"><i style="width:${(cell.rate || 0) * 100}%;background:var(--ok-dot)"></i></div>
+    ${meta ? `<div class="cell-meta">${meta}</div>` : ""}${aside ? `<div class="cell-meta aside">${aside}</div>` : ""}${runDots(cell)}</td>`;
+}
+
+async function openCompare(batch) {
+  $("#crumbs").innerHTML = `<span class="slash">/</span><span>Compare</span>`;
+  sectionNav("compare");
+  app.innerHTML = `<div class="home compare"><h1>Compare</h1>
+    <p class="sub">Success comes from the simulator's ground truth, which the model never sees. Each dot is one episode; open it to see why.</p>
+    <div class="cmp-bar"><label class="select"><span>Batch</span><select id="batch"></select></label><span class="mute" id="cmp-count"></span></div>
+    <div id="cmp-body"><p class="mute">Loading…</p></div></div>`;
+  const load = async () => {
+    let d;
+    try { d = await getJSON(`api/compare${batch ? `?batch=${encodeURIComponent(batch)}` : ""}`); } catch (e) {
+      $("#cmp-body").innerHTML = `<div class="empty-state"><p><b>Could not load the comparison.</b></p><p>${esc(e.message)}</p></div>`; return false;
+    }
+    const sel = $("#batch");
+    if (document.activeElement !== sel) {
+      sel.innerHTML = `<option value="">All recorded episodes</option>` + d.batches.map((b) =>
+        `<option value="${esc(b.id)}" ${b.id === batch ? "selected" : ""}>${esc(when(b.created))} · ${b.models.length} model${b.models.length === 1 ? "" : "s"}, ${b.tasks.length} task${b.tasks.length === 1 ? "" : "s"} · ${b.done}/${b.planned}${b.status === "running" ? " running" : b.status === "stopped" ? " stopped" : ""}</option>`).join("");
+      sel.onchange = () => { location.hash = sel.value ? `#/compare?batch=${encodeURIComponent(sel.value)}` : "#/compare"; };
+    }
+    $("#cmp-count").textContent = `${d.episodes} episode${d.episodes === 1 ? "" : "s"}`;
+    if (!d.episodes) {
+      $("#cmp-body").innerHTML = `<div class="empty-state"><p><b>Nothing to compare yet.</b></p>
+        <p>Run the same tasks with several models and seeds:</p>
+        <p><code>rocode bench mug_to_coaster --model anthropic:claude-opus-5-5 --model openai:gpt-6.1-sol --repeat 3 --view</code></p></div>`;
+      return false;
+    }
+    const cols = d.columns;
+    const head = cols.map((c) => `<th scope="col"><span class="m">${esc(modelName(c.model))}</span>${c.policy ? `<span class="p">${esc(c.policy)}</span>` : ""}</th>`).join("");
+    const rows = d.tasks.map((t) => `<tr><th scope="row">${esc(taskName(t))}</th>${cols.map((c) => matrixCell(d.cells[t][c.key])).join("")}</tr>`).join("");
+    const total = d.tasks.length > 1 ? `<tr class="total"><th scope="row">All tasks</th>${cols.map((c) => matrixCell(d.totals[c.key])).join("")}</tr>` : "";
+    const failures = d.tasks.flatMap((t) => cols.flatMap((c) => ((d.cells[t][c.key] || {}).episodes || [])
+      .filter((e) => ["failed", "error", "stopped"].includes(e.status)).map((e) => ({ ...e, task: t, model: c.model }))));
+    $("#cmp-body").innerHTML = `<div class="matrix-wrap"><table class="matrix"><thead><tr><th scope="col">Task</th>${head}</tr></thead>
+        <tbody>${rows}${total}</tbody></table></div>
+      <p class="foot mute">Rates and medians count episodes the model played to a verdict. Errors (API or harness) and emergency stops are listed beside them, not counted against the model. With a few episodes per cell, a difference of one episode can be chance.</p>
+      ${failures.length ? `<h2>Why episodes failed</h2><div class="table fails">${failures.map((e) => `
+        <${e.has_trace ? `a href="#/e/${encodeURIComponent(e.id)}"` : "div"} class="frow">
+          <span class="st"><span class="dot ${DOT[e.status]}"></span>${esc(statusOf(e.status)[1])}</span>
+          <span>${esc(taskName(e.task))}</span><span>${esc(modelName(e.model))}</span><span class="mono mute">${esc(seedName(e.seed))}</span>
+          <span class="why">${esc(e.why)}</span></${e.has_trace ? "a" : "div"}>`).join("")}</div>` : ""}`;
+    return d.batches.some((b) => b.status === "running" && (!batch || b.id === batch)) || cols.some((c) => d.totals[c.key].running);
+  };
+  if (await load()) poller = setInterval(async () => { if (!(await load())) stopPolling(); }, 2500);
 }
 
 /* ---- episode view -------------------------------------------------------------------------- */
@@ -367,6 +454,7 @@ function updateDebug() {
   ep.notes.forEach((n) => (html += `<div class="turn">${noteRow(n)}</div>`));
   for (const t of ep.turns) {
     html += `<div class="turn"><div class="turn-label"><b>Turn ${t.turn}</b><span class="mono">${fmtTime(t.t)}</span></div>`;
+    if (t.reasoning) html += `<details class="reasoning"><summary><b>Thinking</b><span class="pv">${esc(firstLine(t.reasoning).replace(/\*\*/g, "").slice(0, 90))}</span></summary><p>${esc(t.reasoning.replace(/\*\*/g, ""))}</p></details>`;
     if (t.text) html += `<p class="thought">${esc(t.text)}</p>`;
     for (const c of t.calls) {
       if (c.name === "run_code") {

@@ -11,7 +11,9 @@ from rocode.providers.scripted import ScriptedProvider
 
 @pytest.fixture
 def body():
-    return MujocoTabletop()
+    b = MujocoTabletop()
+    yield b
+    b.close()   # on this thread: a renderer collected on a server thread deadlocks on macOS
 
 
 def make_agent(body, steps, policy="both", extra=(), config=None, control=None):

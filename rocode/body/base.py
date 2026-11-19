@@ -139,3 +139,7 @@ class Body(Protocol):
     def ground_truth(self) -> dict:
         """For scoring only. Nothing that talks to the model may call this."""
         ...
+    def close(self) -> None:
+        """Release renderers, connections and the like, from the creating thread. Safe to call twice.
+        Whoever creates a body closes it."""
+        ...

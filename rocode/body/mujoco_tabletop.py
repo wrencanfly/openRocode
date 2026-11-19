@@ -115,6 +115,15 @@ class MujocoTabletop:
     def info(self) -> BodyInfo:
         return self._info
 
+    def close(self) -> None:
+        """Free the renderers now, on this thread. Left to the garbage collector, a renderer can be freed on
+        whatever thread happens to collect it (a dashboard request, say), and on macOS that deadlocks."""
+        for name in ("_rgb", "_depth"):
+            renderer = getattr(self, name, None)
+            if renderer is not None:
+                renderer.close()
+                setattr(self, name, None)
+
     def reset(self, seed: int | None = None) -> None:
         mujoco.mj_resetData(self.model, self.data)
         rng = np.random.default_rng(seed) if seed is not None else None

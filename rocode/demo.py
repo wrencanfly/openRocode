@@ -23,6 +23,15 @@ def scripted_demo(out_dir: Path | None, subscribers: list[Callable[[Event], None
                   seed: int | None = None) -> SessionReport:
     """Mug to coaster: one direct pointing step, then a program for the rest, then done."""
     body = MujocoTabletop(seed=seed)
+    cfg = SessionConfig(task="mug_to_coaster", provider="scripted", policy="both", seed=seed, out_dir=out_dir)
+    try:
+        return run_session(cfg, provider=scripted_mug_to_coaster(body), subscribers=list(subscribers), body=body)
+    finally:
+        body.close()
+
+
+def scripted_mug_to_coaster(body: MujocoTabletop) -> ScriptedProvider:
+    """A provider that solves mug_to_coaster on this body by reading ground truth instead of looking."""
 
     def pixel(request: Request, point, camera: str = "front") -> tuple[int, int, str]:
         stored = request.images.latest()
@@ -51,10 +60,8 @@ print("finished at", r.height_cm, "cm, pictures", r.observation)
 """
         return [("run_code", {"code": code})]
 
-    provider = ScriptedProvider([
+    return ScriptedProvider([
         hover_over_mug,
         pick_and_place_program,
         [("done", {"success": True, "summary": "The mug is on the coaster."})],
     ])
-    cfg = SessionConfig(task="mug_to_coaster", provider="scripted", policy="both", out_dir=out_dir)
-    return run_session(cfg, provider=provider, subscribers=list(subscribers), body=body)
