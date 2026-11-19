@@ -42,7 +42,7 @@ import numpy as np
 from .checks import Check, CheckError, Clause
 from .scene import DEFAULT_SCENE, Scene, make_object
 
-TASK_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+TASK_ID = re.compile(r"^[a-z][a-z0-9_]{0,63}(:[a-z0-9_.-]{1,64})?$")   # env tasks: robosuite:lift
 INLINE_ID = "custom"
 COASTER_XY = np.array(DEFAULT_SCENE["coaster"].at_cm) / 100   # metres; used by the scripted demo
 
@@ -53,7 +53,8 @@ class Task:
     instruction: str
     success: str | Callable[[dict], bool] | None = None
     scene: Scene = DEFAULT_SCENE
-    source: str = "builtin"                     # builtin, a file path, or "inline" for a typed instruction
+    source: str = "builtin"                     # builtin, a file path, "inline" for a typed instruction, or an env
+    env: str = ""                               # a benchmark environment's task, e.g. "robosuite:lift"
     _check: Check | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -84,10 +85,23 @@ class Task:
     def check(self, gt: dict) -> bool:
         return bool(self.evaluate(gt)[0])
 
+    def make_body(self, seed: int | None = None, width: int = 640, height: int = 480):
+        """A fresh body for this task. The caller closes it."""
+        if self.env:
+            from . import envs
+
+            return envs.make_body(self.env, seed, width, height)
+        from .body.mujoco_tabletop import MujocoTabletop
+
+        return MujocoTabletop(width, height, seed=seed, scene=self.scene)
+
     def spec(self) -> dict:
         """What a trace records, enough to run the task again."""
         success = (self._check.source if self._check is not None else
                    None if self.success is None else f"python:{getattr(self.success, '__qualname__', 'check')}")
+        if self.env:
+            return {"id": self.id, "instruction": self.instruction, "success": success, "source": self.source,
+                    "env": self.env}
         return {"id": self.id, "instruction": self.instruction, "success": success, "source": self.source,
                 "scene": self.scene.to_dict()}
 
@@ -129,9 +143,9 @@ def _load_toml(p: Path) -> tuple[Scene, list[Task]]:
         data = tomllib.loads(p.read_text())
     except tomllib.TOMLDecodeError as err:
         raise ValueError(f"not valid TOML ({err})") from None
-    unknown = set(data) - {"object", "task"}
+    unknown = set(data) - {"object", "task", "robot"}
     if unknown:
-        raise ValueError(f"unknown section(s) {', '.join(sorted(unknown))}; expected [[object]] and [[task]]")
+        raise ValueError(f"unknown section(s) {', '.join(sorted(unknown))}; expected robot, [[object]] and [[task]]")
     objects = []
     for i, o in enumerate(data.get("object", []), start=1):
         bad = set(o) - OBJECT_KEYS
@@ -141,7 +155,9 @@ def _load_toml(p: Path) -> tuple[Scene, list[Task]]:
         if missing:
             raise ValueError(f"object {i}: missing {', '.join(sorted(missing))}")
         objects.append(make_object(**o))
-    scene = Scene(tuple(objects)) if objects else DEFAULT_SCENE
+    scene = Scene(tuple(objects) if objects else DEFAULT_SCENE.objects, data.get("robot", "gripper"))
+    if scene == DEFAULT_SCENE:
+        scene = DEFAULT_SCENE
     tasks = []
     for i, t in enumerate(data.get("task", []), start=1):
         bad = set(t) - TASK_KEYS
@@ -185,16 +201,33 @@ class Catalog:
         return cls(tasks, scenes)
 
     def resolve(self, name: str) -> Task:
-        """A task by id, or, for text with spaces in it, an ungraded task with that instruction. The typed
-        instruction runs in the scene of the one task file given, or in the default scene."""
+        """A task by id, an environment's task (`robosuite:lift`), or, for text with spaces in it, an ungraded
+        task with that instruction. The typed instruction runs in the scene of the one task file given, or in
+        the default scene."""
         if name in self.tasks:
             return self.tasks[name]
+        if ":" in name and " " not in name:
+            return env_task(name)
         if " " in name.strip():
             if len(self.scenes) > 1:
                 raise ValueError("a typed instruction needs one scene: pass at most one --task-file")
             return Task(INLINE_ID, name.strip(), None, self.scenes[0] if self.scenes else DEFAULT_SCENE, "inline")
         raise ValueError(f"unknown task {name!r}. Known: {', '.join(sorted(self.tasks))}. "
                          "To give an instruction instead, put it in quotes.")
+
+
+def env_task(task_id: str) -> Task:
+    """A benchmark environment's task, e.g. robosuite:lift. Checks the name without importing the simulator."""
+    from . import envs
+
+    env, _, short = task_id.partition(":")
+    if env not in envs.ENVIRONMENTS:
+        raise ValueError(f"unknown environment {env!r} in {task_id!r}; known: {', '.join(envs.ENVIRONMENTS)}")
+    known = envs.tasks(env)
+    if short not in known:
+        raise ValueError(f"{env} has no task {short!r}. Known: {', '.join(f'{env}:{k}' for k in sorted(known))}")
+    t = known[short]
+    return Task(task_id, t.instruction, t.success, Scene((), "gripper"), env, env=task_id)
 
 
 def get(name: str | Task) -> Task:

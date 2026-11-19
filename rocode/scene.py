@@ -20,7 +20,8 @@ COLORS = {
     "pink": (0.95, 0.55, 0.70), "brown": (0.50, 0.32, 0.18), "white": (0.92, 0.92, 0.90),
     "black": (0.10, 0.10, 0.11), "gray": (0.62, 0.63, 0.65),
 }
-RESERVED = {"floor", "table", "target", "gripper", "palm", "wrist", "tcp", "finger_left", "finger_right"}
+RESERVED = {"floor", "table", "target", "gripper", "palm", "wrist", "tcp", "finger_left", "finger_right", "leap_target"}
+ROBOTS = ("gripper", "panda", "aloha", "leap")   # see rocode/body/robots.py
 NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 TABLE_HALF_CM = (45.0, 35.0)
 DEFAULT_JITTER_CM = (4.0, 3.0)
@@ -73,12 +74,15 @@ class SceneObject:
 @dataclass(frozen=True)
 class Scene:
     objects: tuple[SceneObject, ...] = field(default_factory=tuple)
+    robot: str = "gripper"
 
     def __post_init__(self) -> None:
+        if self.robot not in ROBOTS:
+            raise ValueError(f"robot {self.robot!r} is not one of {', '.join(ROBOTS)}")
         seen: set[str] = set()
         for o in self.objects:
             for n in (o.name, f"{o.name}_handle"):
-                if n in seen or n in RESERVED:
+                if n in seen or n in RESERVED or n.startswith("pedestal"):
                     raise ValueError(f"object name {o.name!r} is used twice or is reserved")
             seen |= {o.name, f"{o.name}_handle"}
             hx, hy = TABLE_HALF_CM
@@ -105,11 +109,14 @@ class Scene:
         return tuple(o for o in self.objects if o.fixed)
 
     def to_dict(self) -> dict:
-        return {"objects": [o.to_dict() for o in self.objects]}
+        return {"robot": self.robot, "objects": [o.to_dict() for o in self.objects]}
 
     @classmethod
     def from_dict(cls, d: dict) -> Scene:
-        return cls(tuple(make_object(**o) for o in d.get("objects", [])))
+        return cls(tuple(make_object(**o) for o in d.get("objects", [])), d.get("robot", "gripper"))
+
+    def with_robot(self, robot: str) -> Scene:
+        return Scene(self.objects, robot)
 
 
 def make_object(name: str, shape: str, size_cm, color="gray", at_cm=(0, 0), yaw_deg: float = 0.0,

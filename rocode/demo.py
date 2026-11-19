@@ -73,6 +73,13 @@ def scripted_pick_and_place(body, moves: list[tuple[str, str]]) -> ScriptedProvi
     It shows that a task file's goal is reachable with this gripper; a model has to do the same by looking.
     """
     scene = body.scene
+    # several objects going onto one target are set down side by side, not on top of each other
+    slots: dict[tuple[str, str], float] = {}
+    for target in {b for _, b in moves}:
+        objs = [a for a, b in moves if b == target and scene[target].fixed]
+        width = max((scene[a].reach_radius_cm * 2 + 1 for a in objs), default=0) / 100
+        for i, a in enumerate(objs):
+            slots[(a, target)] = (i - (len(objs) - 1) / 2) * width
 
     def step(obj: str, onto: str):
         def program(request: Request):
@@ -81,20 +88,33 @@ def scripted_pick_and_place(body, moves: list[tuple[str, str]]) -> ScriptedProvi
             stored = request.images.latest()
             cam = stored.observation.cameras["front"]
             ox, oy = (round(v) for v in cam.project(top(obj)))
-            tx, ty = (round(v) for v in cam.project(top(onto)))
-            turn = "robot.turn(90)\n" if scene[obj].shape == "mug" else ""
+            tx, ty = (round(v) for v in cam.project(top(onto) + [slots.get((obj, onto), 0.0), 0, 0]))
+            arm, away = "", ""
+            if len(body.arms) > 1:   # an arm that reaches both ends of the move, the nearer one if both do
+                ends = [top(obj) + [0, 0, 0.06], top(onto) + [0, 0, scene[obj].height_cm / 100 + 0.03]]
+                able = [n for n, a in body.arms.items() if all(a.reachable(p) for p in ends)] or list(body.arms)
+                name = min(able, key=lambda n: np.linalg.norm(body.arms[n].tcp()[:2] - gt["objects"][obj][:2]))
+                arm = f", arm={name!r}"
+                # then step back over to this arm's own end, out of the other arm's way
+                # (5 cm past home: ALOHA wrist-camera mounts reach about 10 cm toward the other arm)
+                home_x = body.robot.home_tcp[name][0]
+                back = (home_x + np.sign(home_x) * 0.05 - top(onto)[0] - slots.get((obj, onto), 0.0)) * 100
+                steps = [float(np.clip(back, -20, 20)), float(back - np.clip(back, -20, 20))]
+                away = "".join(f"robot.nudge(\"front\", right_cm={d:.1f}, up_cm={5 if i == 0 else 0}{arm})\n"
+                               for i, d in enumerate(steps) if abs(d) > 0.5 or i == 0)
+            turn = f"robot.turn(90{arm})\n" if scene[obj].shape == "mug" else ""
             code = f"""
-{turn}robot.move_to("front", {ox}, {oy}, hover_cm=6, observation="{stored.id}")
-r = robot.lower()
-r = robot.grip("close")
+{turn}robot.move_to("front", {ox}, {oy}, hover_cm=6, observation="{stored.id}"{arm})
+r = robot.lower({arm.lstrip(', ')})
+robot.grip("close"{arm})
+r = robot.nudge("front", up_cm=12{arm})
 if not r.holding:
     raise SystemExit("missed {obj}")
-robot.nudge("front", up_cm=12)
-robot.move_to("front", {tx}, {ty}, hover_cm={scene[obj].height_cm + 3:g}, observation="{stored.id}")
-robot.lower()
-robot.grip("open")
-robot.nudge("front", up_cm=10)
-"""
+robot.move_to("front", {tx}, {ty}, hover_cm={scene[obj].height_cm + 3:g}, observation="{stored.id}"{arm})
+robot.lower({arm.lstrip(', ')})
+robot.grip("open"{arm})
+robot.nudge("front", up_cm=10{arm})
+{away}"""
             return [("run_code", {"code": code})]
         return program
 

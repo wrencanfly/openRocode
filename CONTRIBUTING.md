@@ -9,7 +9,7 @@ git clone https://github.com/wrencanfly/openRocode.git
 cd openRocode
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[sim,agent,openai,dev]'
-pytest            # 79 tests, about 12 seconds, no API key
+pytest            # about 100 tests, under a minute, no API key
 rocode demo       # a scripted episode end to end
 ```
 
@@ -31,14 +31,17 @@ Changes to events are changes to the [trace format](docs/trace-format.md), which
 
 ### Add a robot or simulator (a body)
 
-Implement the `Body` protocol in `rocode/body/base.py`: `info`, `observe`, `move`, `rotate`, `grip`, `stop`, `reset`, `ground_truth` and `close`. Use `rocode/body/mujoco_tabletop.py` as the reference.
+Implement the `Body` protocol in `rocode/body/base.py`: `info`, `observe`, `move`, `rotate`, `grip`, `drive`, `stop`, `reset`, `ground_truth` and `close`. Anything in MuJoCo should subclass `MujocoBody` (`rocode/body/mj.py`) with one arm driver per arm, as `rocode/body/robots.py` (Panda, ALOHA, LEAP) and `rocode/envs/` (robosuite, Meta-World) do. [docs/robots-and-environments.md](docs/robots-and-environments.md#writing-a-body) explains the pieces.
+
+- `info` lists the arms (`BodyInfo.arms`): the tools add an `arm` argument when there is more than one, and drop `turn` when no wrist turns.
 
 - `observe` returns RGB images, depth when you have it, and a `CameraModel` per camera. The pointing tools need depth and calibration to turn a click into a 3D target.
 - `move` must stop on contact above `guard.max_force_n` (measured relative to the start of the motion), check `cancel` every control period, and return an honest `Receipt`.
-- `ground_truth` is for scoring only. Nothing the model sees may call it.
+- `ground_truth` is for scoring only. Nothing the model sees may call it. A benchmark environment puts its own verdict in `success`, which `env_success()` reads.
+- `reset(seed)` must give the same layout for the same seed, every time and in every process: a bench compares models on the same tables.
 - `close` frees renderers and connections. Whoever creates a body closes it, on the creating thread: a MuJoCo renderer left to the garbage collector can be freed on a dashboard thread, which deadlocks on macOS.
 
-Add a test that runs the scripted demo, or an equivalent script, against your body.
+Add a test that solves a task through your body with a scripted policy (see `tests/test_robots.py` and `tests/test_envs.py`), and skip it when an optional simulator is not installed.
 
 ### Add a task
 

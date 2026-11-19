@@ -13,8 +13,9 @@ Predicates (all read the state at the end of the episode):
 
     on(a, b)             a rests on b: its centre is over b's footprint, above b's top and below b's top plus
                          a's own height, and the gripper is not holding it. b may be `table`.
-    held(a)              the gripper is holding a.
-    hand_empty()         the gripper is holding nothing.
+    held(a)              a hand is holding a.
+    hand_empty()         no hand is holding anything.
+    env_success()        a benchmark environment (robosuite, Meta-World) reports its own task as solved.
     upright(a[, deg])    a's up axis leans at most deg from vertical (default 15).
     height_cm(a)         height of a's centre above the table top.
     distance_cm(a, b)    horizontal distance between the centres of a and b.
@@ -38,7 +39,7 @@ TABLE = "table"
 
 # name -> (object arguments, optional number arguments)
 SIGNATURES = {
-    "on": (2, 0), "held": (1, 0), "hand_empty": (0, 0), "upright": (1, 1), "height_cm": (1, 0),
+    "on": (2, 0), "held": (1, 0), "hand_empty": (0, 0), "env_success": (0, 0), "upright": (1, 1), "height_cm": (1, 0),
     "distance_cm": (2, 0), "x_cm": (1, 0), "y_cm": (1, 0), "tilt_deg": (1, 0),
 }
 COMPARE = {ast.Lt: np.less, ast.LtE: np.less_equal, ast.Gt: np.greater, ast.GtE: np.greater_equal}
@@ -171,9 +172,14 @@ def _pos_cm(gt: dict, name: str) -> np.ndarray:
     return np.asarray(gt["objects"][name], dtype=float) * 100
 
 
+def _held(gt: dict) -> set[str]:
+    """Everything any hand is holding."""
+    return {h for h in (gt.get("held"), *(gt.get("held_by") or {}).values()) if h}
+
+
 def _on(gt: dict, scene: Scene, a: str, b: str) -> bool:
     pa = _pos_cm(gt, a)
-    if gt.get("held") == a:
+    if a in _held(gt):
         return False
     if b == TABLE:
         return bool(pa[2] < scene[a].height_cm / 2 + 1.0)   # resting on the table top, give or take a centimetre
@@ -185,8 +191,9 @@ def _on(gt: dict, scene: Scene, a: str, b: str) -> bool:
 
 PREDICATES = {
     "on": _on,
-    "held": lambda gt, scene, a: gt.get("held") == a,
-    "hand_empty": lambda gt, scene: gt.get("held") is None,
+    "held": lambda gt, scene, a: a in _held(gt),
+    "hand_empty": lambda gt, scene: not _held(gt),
+    "env_success": lambda gt, scene: bool(gt.get("success")),
     "upright": lambda gt, scene, a, deg=UPRIGHT_DEG: (gt.get("tilt_deg") or {}).get(a, 0.0) <= deg,
     "height_cm": lambda gt, scene, a: float(_pos_cm(gt, a)[2]),
     "distance_cm": lambda gt, scene, a, b: float(np.hypot(*(_pos_cm(gt, a)[:2] - _pos_cm(gt, b)[:2]))),

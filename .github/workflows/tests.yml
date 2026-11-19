@@ -31,3 +31,23 @@ jobs:
         run: pip install -e '.[sim,agent,openai,dev]'
       - name: Test
         run: pytest -q
+
+  robots-and-environments:
+    # The Panda, ALOHA and LEAP models (MuJoCo Menagerie) and the robosuite and Meta-World environments,
+    # which pin MuJoCo below 3.4.
+    runs-on: ubuntu-latest
+    env:
+      MUJOCO_GL: osmesa
+      PYOPENGL_PLATFORM: osmesa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install OSMesa
+        run: sudo apt-get update && sudo apt-get install -y libosmesa6 libosmesa6-dev
+      - name: Install
+        run: pip install -e '.[sim,robots,robosuite,metaworld,agent,openai,dev]'
+      - name: Test
+        run: pytest -q -rs

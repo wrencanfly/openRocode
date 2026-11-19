@@ -140,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
 
     tasks = sub.add_parser("tasks", help="List tasks, and check task files.")
     tasks.add_argument("--task-file", dest="task_files", action="append", type=Path, default=[], metavar="FILE")
+    tasks.add_argument("--env", action="append", default=[], metavar="ENV",
+                       help="Also list a benchmark environment's tasks: robosuite or metaworld (repeatable).")
 
     preview = sub.add_parser("preview", help="Render a task's scene from both cameras, without calling a model.")
     preview.add_argument("task", help="A task id, or a .toml/.py task file (its scene).")
@@ -156,9 +158,20 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as err:
             ap.error(str(err))
     if args.cmd == "tasks":
-        for t in catalog.tasks.values():
+        from . import envs
+        from .tasks import env_task
+
+        listed = list(catalog.tasks.values())
+        for env in args.env:
+            if env not in envs.ENVIRONMENTS:
+                ap.error(f"unknown environment {env!r}; known: {', '.join(envs.ENVIRONMENTS)}")
+            listed += [env_task(f"{env}:{short}") for short in envs.tasks(env)]
+        for t in listed:
             where = "" if t.source == "builtin" else f"  ({t.source})"
-            print(f"{t.id:<22} {t.instruction}{where}\n{'':<22} success: {t.spec()['success'] or 'not graded'}")
+            robot = "" if t.env or t.scene.robot == "gripper" else f"  [robot: {t.scene.robot}]"
+            print(f"{t.id:<30} {t.instruction}{where}{robot}\n{'':<30} success: {t.spec()['success'] or 'not graded'}")
+        if not args.env:
+            print(f"\nBenchmark environments ({', '.join(envs.ENVIRONMENTS)}): rocode tasks --env NAME")
         return 0
     if args.cmd == "preview":
         return preview_command(args, catalog, ap)
@@ -254,10 +267,11 @@ def preview_command(args, catalog: Catalog, ap: argparse.ArgumentParser) -> int:
         if args.task.endswith((".toml", ".py")):
             scene, _ = load_file(args.task)
             name = Path(args.task).stem
+            body = MujocoTabletop(seed=args.seed, scene=scene)
         else:
             task = catalog.resolve(args.task)
-            scene, name = task.scene, task.id
-        body = MujocoTabletop(seed=args.seed, scene=scene)
+            name = task.id
+            body = task.make_body(seed=args.seed)
     except ValueError as err:
         ap.error(str(err))
     try:

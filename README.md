@@ -41,7 +41,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e '.[sim,agent,openai,dev]'
 
 rocode demo        # a scripted episode, no API key: checks your install
-pytest             # 79 tests, about 12 seconds, no API key
+pytest             # about 100 tests, under a minute, no API key
 ```
 
 Then give a model the arm, and watch it in the dashboard:
@@ -64,6 +64,17 @@ Give it your own task, typed or from a file:
 rocode run "Push the blue block to the left edge of the table" --view     # recorded, not graded
 rocode preview examples/tasks/sorting.toml                                 # see the scene first, no model call
 rocode run sort_blocks --task-file examples/tasks/sorting.toml --view
+```
+
+Swap the robot, or run a benchmark's own tasks (see [docs/robots-and-environments.md](docs/robots-and-environments.md)):
+
+```bash
+pip install -e '.[robots]'                     # Panda, ALOHA and LEAP from MuJoCo Menagerie
+rocode run both_blocks_to_tray --task-file examples/tasks/aloha_bimanual.toml --view
+
+pip install -e '.[robosuite,metaworld]'        # needs MuJoCo 3.2 or 3.3
+rocode tasks --env robosuite --env metaworld
+rocode run metaworld:drawer-open-v3 --view
 ```
 
 Compare models on the same tasks, with several object layouts each:
@@ -130,6 +141,12 @@ success = "on(red_block, tray)"
 ```
 
 The success check is an expression over the simulator's final state (`on`, `held`, `upright`, `height_cm`, `distance_cm`, …), checked when the file loads and judged part by part, so a failed episode says which condition failed and by how much. Python files can define checks as functions. The whole task is recorded in every trace. Format: [docs/tasks.md](docs/tasks.md). Examples: [`examples/tasks/`](examples/tasks/), with look-alike objects, sorting and a three-block tower.
+
+### Arms, hands and benchmarks behind one interface
+
+The same tools drive a floating gripper, a Franka Panda, two ALOHA arms and a 16-joint LEAP hand, set by one line in a task file. With two arms, every tool takes `arm` and the pictures mark each fingertip. Arms are moved by inverse kinematics; a point an arm cannot reach is refused before anything moves.
+
+robosuite and Meta-World tasks run as bodies too: `rocode run robosuite:stack` uses robosuite's own scene, controller and success check, with openRocode's pointing tools, traces, `rocode bench` and dashboard on top. A seed always gives the same layout, so every model in a bench faces the same tables.
 
 ### Every run is a trace
 
@@ -234,7 +251,7 @@ print(r.holding, r.opening_cm, r.height_cm, r.stop)
 
 - **Append-only history.** Nothing already sent to the model is edited. Old pictures are trimmed only by the provider's own mechanism (`--keep-images N`).
 - **Hooks, not forks.** An extension can add tools and prompt text, refuse or rewrite a call before it runs, change a result after it runs, or watch the event stream.
-- **Bodies are one small interface.** Adding a robot means implementing `info`, `observe`, `move`, `rotate`, `grip`, `stop`, `reset`, `ground_truth` and `close`. Nothing above that layer changes.
+- **Bodies are one small interface.** Adding a robot means implementing `info`, `observe`, `move`, `rotate`, `grip`, `drive`, `stop`, `reset`, `ground_truth` and `close`. Nothing above that layer changes. In MuJoCo, a body is a `MujocoBody` with one arm driver per arm; robosuite and Meta-World are wrapped this way.
 
 Design notes: [docs/design.md](docs/design.md) (goals and scope) and [docs/core-design.md](docs/core-design.md) (internals). The dashboard follows [DESIGN.md](DESIGN.md).
 
@@ -249,6 +266,17 @@ These runs show that the loop works end to end with each model. They do not rank
 | Claude Opus 5.5 | 3/3 | 8 | 34.9 s | 71k |
 | Claude Sonnet 5.5 | 3/3 | 9 | 34.4 s | 107k |
 | GPT-6.1 Sol | 3/3 | 10 | 38.5 s | 48k |
+
+Then the four tasks in `examples/tasks/` (look-alike objects, sorting, a three-block tower, a block on a can), five layouts each, same three models, floating gripper. 58 of 60 succeeded:
+
+| Task | Claude Opus 5.5 | Claude Sonnet 5.5 | GPT-6.1 Sol |
+|---|---|---|---|
+| `sort_blocks` | 5/5 | 3/5 | 5/5 |
+| `stack_three` | 5/5 | 5/5 | 5/5 |
+| `red_block_to_coaster` | 5/5 | 5/5 | 5/5 |
+| `block_on_can` | 5/5 | 5/5 | 5/5 |
+
+Both failures were Sonnet calling `done` with the blue block not on the tray; the Compare page shows `on(blue_block, tray)` false for each. With a floating gripper these tasks are still too easy to separate the models. The jointed arms, the two-arm tasks and the benchmark environments are where the next comparison runs.
 
 Earlier single runs, all successful:
 
@@ -267,34 +295,36 @@ Earlier single runs, all successful:
 rocode/
   core/        loop, events, hooks, control channel, messages, tool contract
   providers/   anthropic.py, openai_compat.py, scripted.py
-  body/        base.py (the body contract), mujoco_tabletop.py
+  body/        base.py (the body contract), mj.py (shared MuJoCo machinery), robots.py, mujoco_tabletop.py
+  envs/        robosuite_env.py, metaworld_env.py: benchmark environments as bodies
   ext/         pointing.py, code.py (run_code), safety.py, recorder.py
   view/        the dashboard: episodes.py, compare.py, server.py, static/
   scene.py     objects on the table; checks.py, success expressions; tasks.py, tasks and task files
   session.py   bench.py   trace.py   cli.py   demo.py
-examples/tasks/  task files: look-alike objects, sorting, stacking
-tests/         harness, task, provider, trace, bench and dashboard tests (no API key needed)
-docs/          task format, trace format, design notes and images
+examples/tasks/  task files: look-alike objects, sorting, stacking, two-arm tasks, a dexterous hand
+tests/         harness, task, robot, environment, provider, trace, bench and dashboard tests (no API key needed)
+docs/          task format, robots and environments, trace format, design notes and images
 ```
 
 ## Status and roadmap
 
-openRocode is **alpha**. It works today on one MuJoCo tabletop with a floating gripper: the core, both providers, pointing tools, `run_code`, operator controls, task files, traces, batch comparison, replay and the dashboard.
+openRocode is **alpha**. It works today in MuJoCo: the tabletop with four robots (a floating gripper, a Franka Panda, two ALOHA arms, a LEAP hand), robosuite and Meta-World tasks, both providers, pointing tools, `run_code`, operator controls, task files, traces, batch comparison, replay and the dashboard.
 
 Known limits:
 
-- No arm kinematics yet: the gripper floats, so reachability and joint limits are not modelled.
+- The hand always points down and turns only about vertical, so tasks that need the wrist to pitch (robosuite's Door, Wipe) are left out.
+- No mobile or legged bodies yet: the contract has `drive` and `BodyInfo.base`, but no body implements them.
+- robosuite and Meta-World need MuJoCo 3.2 or 3.3; the rest runs on 3.2 through 4.0. GPU simulators (Isaac Lab, BEHAVIOR, RoboTwin) and LIBERO, RoboCasa and ManiSkill are not wrapped yet.
 - `run_code` runs in a separate interpreter with call and time budgets, but it is not a security sandbox.
-- One body: a tabletop with boxes, cylinders, spheres and mugs. No meshes or articulated objects (drawers, doors) yet.
 - Success is judged on the final state only, not on how the robot got there.
 
 Next:
 
-1. A harder task suite with published results, including failures. Then a second body (LIBERO) to prove the body contract, with its tasks in `rocode bench`.
-2. Export traces to OpenTelemetry, so Langfuse, Phoenix and other LLM observability tools can show them.
-3. A Python SDK, and an MCP server so Claude Code, pi and other agents can drive a robot directly.
-4. A simulated arm with real kinematics, then a first real-robot adapter.
-5. A hard real-time safety loop beside physical robots.
+1. Published comparisons on the jointed arms, two-arm tasks and benchmark tasks, including failures.
+2. LIBERO and ManiSkill as environments; mobile and legged bodies behind `drive`.
+3. Export traces to OpenTelemetry, so Langfuse, Phoenix and other LLM observability tools can show them.
+4. A Python SDK, and an MCP server so Claude Code, pi and other agents can drive a robot directly.
+5. A first real-robot adapter, with a hard real-time safety loop beside it.
 6. Trained policies (VLAs) as tools.
 
 ## Contributing
@@ -303,7 +333,7 @@ openRocode is early, and focused contributions change a lot. Good places to star
 
 | You want to | Start in | Guide |
 |---|---|---|
-| Connect a robot or simulator | `rocode/body/` | [Add a body](CONTRIBUTING.md#add-a-robot-or-simulator-a-body) |
+| Connect a robot or simulator | `rocode/body/`, `rocode/envs/` | [Robots and environments](docs/robots-and-environments.md#writing-a-body) |
 | Add a task | a `.toml` file | [docs/tasks.md](docs/tasks.md) |
 | Support another model API | `rocode/providers/` | [Add a provider](CONTRIBUTING.md#add-a-model-provider) |
 | Add a capability or tool | `rocode/ext/` | [Rules the harness depends on](CONTRIBUTING.md#rules-the-harness-depends-on) |

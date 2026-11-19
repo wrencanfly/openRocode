@@ -64,12 +64,36 @@ class CameraModel:
 
 
 @dataclass(frozen=True)
-class Proprio:
+class ArmState:
     tcp_xyz: np.ndarray        # fingertip centre, world metres
-    yaw: float                 # gripper rotation about vertical, radians
-    opening_m: float           # measured gap between the finger pads
+    yaw: float                 # hand rotation about vertical, radians
+    opening_m: float           # measured gap between the finger pads (a hand: between thumb and fingers)
     opening_cmd_m: float       # commanded gap
     wrist_force_n: float       # contact force on the hand and anything it holds
+
+
+@dataclass(frozen=True)
+class Proprio:
+    """The first arm's state as flat fields, and every arm's by name in `arms`."""
+
+    tcp_xyz: np.ndarray
+    yaw: float
+    opening_m: float
+    opening_cmd_m: float
+    wrist_force_n: float
+    arms: dict[str, ArmState] = field(default_factory=dict)
+    base_xy_yaw: tuple[float, float, float] | None = None   # mobile bodies: where the base is, world frame
+
+    @classmethod
+    def of(cls, arms: dict[str, ArmState], base_xy_yaw=None) -> Proprio:
+        first = next(iter(arms.values()))
+        return cls(first.tcp_xyz, first.yaw, first.opening_m, first.opening_cmd_m, first.wrist_force_n, dict(arms),
+                   base_xy_yaw)
+
+    def arm(self, name: str | None = None) -> ArmState:
+        if name is None or not self.arms:
+            return ArmState(self.tcp_xyz, self.yaw, self.opening_m, self.opening_cmd_m, self.wrist_force_n)
+        return self.arms[name]
 
 
 @dataclass(frozen=True)
@@ -94,12 +118,51 @@ class Workspace:
 
 
 @dataclass(frozen=True)
+class ArmInfo:
+    """One arm and what is on the end of it. Names are what the model calls them ("left", "right")."""
+
+    name: str
+    hand: Literal["gripper", "hand"] = "gripper"   # a parallel gripper, or a multi-fingered hand
+    max_opening_m: float = 0.08
+    turns: bool = True                             # whether the wrist can rotate about vertical
+
+
+@dataclass(frozen=True)
+class BaseInfo:
+    """A body that can move itself around: wheels or legs."""
+
+    kind: Literal["wheeled", "legged"]
+    max_step_m: float = 1.0          # longest single drive command
+    area: tuple[tuple[float, float], tuple[float, float]] = ((-3.0, -3.0), (3.0, 3.0))   # where it may go, x/y
+
+
+@dataclass(frozen=True)
 class BodyInfo:
     name: str
     cameras: tuple[str, ...]
     has_depth: bool
     workspace: Workspace
     max_opening_m: float
+    arms: tuple[ArmInfo, ...] = ()           # empty: one arm called "hand" with max_opening_m
+    base: BaseInfo | None = None
+    robot: str = ""                           # what the model is told it controls, e.g. "a Franka Panda arm"
+    surface: Literal["table", "floor"] = "table"
+
+    def __post_init__(self) -> None:
+        if not self.arms:
+            object.__setattr__(self, "arms", (ArmInfo("hand", "gripper", self.max_opening_m),))
+
+    @property
+    def arm_names(self) -> tuple[str, ...]:
+        return tuple(a.name for a in self.arms)
+
+    def arm(self, name: str | None = None) -> ArmInfo:
+        if name is None:
+            return self.arms[0]
+        for a in self.arms:
+            if a.name == name:
+                return a
+        raise KeyError(f"no arm called {name!r}; this body has {', '.join(self.arm_names)}")
 
 
 @dataclass(frozen=True)
@@ -131,9 +194,12 @@ class Body(Protocol):
 
     def info(self) -> BodyInfo: ...
     def observe(self) -> Observation: ...
-    def move(self, goal_xyz, guard: Guard, cancel: CancelToken) -> Receipt: ...
-    def rotate(self, yaw: float, cancel: CancelToken) -> Receipt: ...
-    def grip(self, opening_m: float, cancel: CancelToken) -> Receipt: ...
+    def move(self, goal_xyz, guard: Guard, cancel: CancelToken, arm: str | None = None) -> Receipt: ...
+    def rotate(self, yaw: float, cancel: CancelToken, arm: str | None = None) -> Receipt: ...
+    def grip(self, opening_m: float, cancel: CancelToken, arm: str | None = None) -> Receipt: ...
+    def drive(self, forward_m: float, left_m: float, turn_rad: float, cancel: CancelToken) -> Receipt:
+        """Mobile bodies only: move the base, in its own frame. Arms keep their pose relative to the base."""
+        ...
     def stop(self) -> None: ...
     def reset(self, seed: int | None = None) -> None: ...
     def ground_truth(self) -> dict:

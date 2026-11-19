@@ -61,20 +61,21 @@ class _Robot:
     def look(self):
         return self._call("look")
 
-    def move_to(self, camera, x, y, hover_cm=8, observation=None):
-        return self._call("move_to", camera=camera, x=int(x), y=int(y), hover_cm=hover_cm, observation=observation)
+    def move_to(self, camera, x, y, hover_cm=8, observation=None, arm=None):
+        return self._call("move_to", camera=camera, x=int(x), y=int(y), hover_cm=hover_cm, observation=observation,
+                          arm=arm)
 
-    def lower(self, cm=None):
-        return self._call("lower", cm=cm)
+    def lower(self, cm=None, arm=None):
+        return self._call("lower", cm=cm, arm=arm)
 
-    def nudge(self, camera, right_cm=0, away_cm=0, up_cm=0):
-        return self._call("nudge", camera=camera, right_cm=right_cm, away_cm=away_cm, up_cm=up_cm)
+    def nudge(self, camera, right_cm=0, away_cm=0, up_cm=0, arm=None):
+        return self._call("nudge", camera=camera, right_cm=right_cm, away_cm=away_cm, up_cm=up_cm, arm=arm)
 
-    def turn(self, degrees):
-        return self._call("turn", degrees=degrees)
+    def turn(self, degrees, arm=None):
+        return self._call("turn", degrees=degrees, arm=arm)
 
-    def grip(self, action):
-        return self._call("grip", action=action)
+    def grip(self, action, arm=None):
+        return self._call("grip", action=action, arm=arm)
 
 robot = _Robot()
 '''
@@ -203,10 +204,14 @@ class RunCode:
 
 class CodeAsPolicy(Extension):
     name = "code"
-    prompt = PROMPT
 
-    def __init__(self, cameras: tuple[str, ...], **limits):
+    def __init__(self, cameras: tuple[str, ...], arms: tuple[str, ...] = ("hand",), **limits):
         self.tools = [RunCode(cameras, **limits)]
+        self.prompt = PROMPT
+        if len(arms) > 1:
+            self.prompt += (f"\nEvery motion call takes arm= one of {', '.join(repr(a) for a in arms)}, e.g. "
+                            f"robot.grip(\"close\", arm={arms[0]!r}). Results describe the arm that moved and, under "
+                            "`arms`, every arm.")
 
 
 def _send(sock: socket.socket, payload: dict) -> None:

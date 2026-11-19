@@ -1,0 +1,45 @@
+# A floating four-fingered LEAP hand, palm down. The hand is wide (its open fingers span about 20 cm), so
+# objects are spread out. It closes into one power grasp; `grip close` wraps the fingers around what is below.
+robot = "leap"
+
+[[object]]
+name = "pad"
+shape = "box"
+size_cm = [14, 14, 0.6]
+color = "green"
+at_cm = [2, -14]
+fixed = true
+
+[[object]]
+name = "tray"
+shape = "box"
+size_cm = [14, 12, 0.6]
+color = "white"
+at_cm = [-24, -16]
+fixed = true
+
+[[object]]
+name = "block"
+shape = "box"
+size_cm = 5
+color = "orange"
+at_cm = [-20, 10]
+jitter_cm = [2, 2]
+
+[[object]]
+name = "can"
+shape = "cylinder"
+size_cm = [5, 8]
+color = "blue"
+at_cm = [20, 10]
+jitter_cm = [2, 2]
+
+[[task]]
+id = "block_to_pad"
+instruction = "Put the orange block on the green pad."
+success = "on(block, pad) and hand_empty()"
+
+[[task]]
+id = "can_to_tray"
+instruction = "Stand the blue can upright on the white tray."
+success = "on(can, tray) and upright(can)"

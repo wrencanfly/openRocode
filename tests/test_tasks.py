@@ -147,7 +147,12 @@ def test_catalog_resolves_ids_and_typed_instructions(tmp_path):
 
 def all_tasks():
     catalog = Catalog.load(sorted(EXAMPLES.glob("*.toml")))
-    return list(catalog.tasks.values())
+    tasks = list(catalog.tasks.values())
+    try:
+        import robot_descriptions  # noqa: F401
+    except ImportError:   # arm and hand models come from MuJoCo Menagerie
+        tasks = [t for t in tasks if t.scene.robot == "gripper"]
+    return tasks
 
 
 @pytest.mark.parametrize("task", all_tasks(), ids=lambda t: t.id)
@@ -160,7 +165,7 @@ def test_no_task_starts_solved(task):
             body.close()
 
 
-SOLUTIONS = {
+SOLUTIONS = {   # tasks for other robots are solved in test_robots.py
     "sort_blocks": [("red_block", "tray"), ("blue_block", "tray"), ("green_block", "pad")],
     "stack_three": [("blue_block", "green_block"), ("red_block", "blue_block")],
     "red_block_to_coaster": [("red_block", "coaster")],
