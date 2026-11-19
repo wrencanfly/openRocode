@@ -1,0 +1,59 @@
+# Look-alike objects: two red things, two blue things. The model has to pick by shape as well as colour.
+#
+#   rocode preview examples/tasks/distractors.toml
+#   rocode run red_block_to_coaster --task-file examples/tasks/distractors.toml
+
+[[object]]
+name = "coaster"
+shape = "cylinder"
+size_cm = [10, 0.6]
+color = "yellow"
+at_cm = [-16, -10]
+fixed = true
+
+[[object]]
+name = "mug"
+shape = "mug"
+size_cm = [6, 9]
+color = "red"
+at_cm = [12, 12]
+mass_g = 150
+
+[[object]]
+name = "red_block"
+shape = "box"
+size_cm = 4
+color = "red"
+at_cm = [-6, 12]
+
+[[object]]
+name = "blue_block"
+shape = "box"
+size_cm = 4
+color = "blue"
+at_cm = [16, -12]
+
+[[object]]
+name = "blue_ball"
+shape = "sphere"
+size_cm = 4.5
+color = "blue"
+at_cm = [2, -2]
+jitter_cm = [2, 2]
+
+[[object]]
+name = "can"
+shape = "cylinder"
+size_cm = [5, 8]
+color = "orange"
+at_cm = [-22, 12]
+
+[[task]]
+id = "red_block_to_coaster"
+instruction = "Put the red block on the yellow coaster and let go of it. Leave everything else where it is."
+success = "on(red_block, coaster) and not on(mug, coaster)"
+
+[[task]]
+id = "block_on_can"
+instruction = "Put the blue block on top of the orange can and let go of it."
+success = "on(blue_block, can) and upright(can)"

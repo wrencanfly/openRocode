@@ -35,6 +35,8 @@ def _status(start: dict, end: dict | None, evaluation: dict) -> str:
         return "succeeded"
     if evaluation.get("success") is False:
         return "failed"
+    if evaluation.get("graded") is False:
+        return "ungraded"
     return "ended"
 
 
@@ -68,6 +70,7 @@ def summarize(d: Path) -> dict | None:
         "status": _status(start, end, evaluation),
         "reason": (end or {}).get("reason"),
         "claimed": evaluation.get("claimed"),
+        "failed_checks": [c.get("expr") for c in evaluation.get("clauses") or [] if not c.get("ok")],
         "live": end is None,
         "turns": stats.get("turns", turns),
         "steps": stats.get("steps"),
@@ -75,6 +78,10 @@ def summarize(d: Path) -> dict | None:
         "usage": usage,
         "error": stats.get("error", ""),
     }
+
+
+def start_event(events: list[dict]) -> dict | None:
+    return next((e for e in events if e["type"] == "EpisodeStart"), None)
 
 
 def list_episodes(root: Path) -> list[dict]:
@@ -152,6 +159,8 @@ def load_episode(root: Path, episode_id: str) -> dict | None:
         "reason": (end or {}).get("reason"),
         "success": evaluation.get("success"),
         "claimed": evaluation.get("claimed"),
+        "check": evaluation.get("check") or ((start_event(events) or {}).get("config", {}).get("task_spec") or {}).get("success"),
+        "clauses": evaluation.get("clauses") or [],
         "observations": observations,
         "setup": before_first_turn,
         "turns": turns,

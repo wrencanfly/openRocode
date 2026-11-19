@@ -1,4 +1,5 @@
-"""Command line: `rocode run`, `rocode bench`, `rocode demo`, `rocode view`, `rocode tasks`, `rocode replay`."""
+"""Command line: `rocode run`, `rocode bench`, `rocode demo`, `rocode view`, `rocode tasks`, `rocode preview`,
+`rocode replay`."""
 
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from .core.control import ControlChannel
 from .core.events import (AssistantReply, EpisodeEnd, EStop, Event, Notice, OperatorInput, Paused, Resumed,
                           ToolDenied, ToolEnd, ToolStart, TurnStart)
 from .session import SessionConfig, default_out_dir, run_session
-from .tasks import TASKS
+from .tasks import Catalog
 
 
 class ConsoleView:
@@ -87,7 +88,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     run = sub.add_parser("run", help="Run one episode with a real model.")
-    run.add_argument("task", choices=sorted(TASKS))
+    run.add_argument("task", help="A task id (see rocode tasks), or an instruction in quotes, which runs ungraded.")
+    run.add_argument("--task-file", dest="task_files", action="append", type=Path, default=[], metavar="FILE",
+                     help="Load tasks and their scene from a .toml or .py file (repeatable). See docs/tasks.md.")
     run.add_argument("--provider", default="anthropic", choices=["anthropic", "openai"])
     run.add_argument("--model", default=None, help="Default: claude-opus-5-5 for anthropic.")
     run.add_argument("--base-url", default=None, help="OpenAI-compatible server URL (vLLM, Qwen, DeepSeek...).")
@@ -113,7 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     view.add_argument("--no-open", action="store_true", help="Print the address without opening a browser.")
 
     bench = sub.add_parser("bench", help="Run tasks x models x seeds and compare them in the dashboard.")
-    bench.add_argument("tasks", nargs="+", choices=sorted(TASKS), metavar="TASK")
+    bench.add_argument("tasks", nargs="+", metavar="TASK", help="Task ids, built in or from --task-file.")
+    bench.add_argument("--task-file", dest="task_files", action="append", type=Path, default=[], metavar="FILE",
+                       help="Load tasks from a .toml or .py file (repeatable).")
     bench.add_argument("--model", dest="models", action="append", metavar="PROVIDER:MODEL",
                        help="Repeat for each model, e.g. --model anthropic:claude-opus-5-5 --model openai:gpt-6.1-sol. "
                             "Default: anthropic:claude-opus-5-5.")
@@ -133,15 +138,30 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--port", type=int, default=8765)
     bench.add_argument("--no-open", action="store_true")
 
-    sub.add_parser("tasks", help="List tasks.")
+    tasks = sub.add_parser("tasks", help="List tasks, and check task files.")
+    tasks.add_argument("--task-file", dest="task_files", action="append", type=Path, default=[], metavar="FILE")
+
+    preview = sub.add_parser("preview", help="Render a task's scene from both cameras, without calling a model.")
+    preview.add_argument("task", help="A task id, or a .toml/.py task file (its scene).")
+    preview.add_argument("--task-file", dest="task_files", action="append", type=Path, default=[], metavar="FILE")
+    preview.add_argument("--seed", type=int, default=None)
+    preview.add_argument("--out", type=Path, default=Path("."), help="Directory for the pictures.")
     rep = sub.add_parser("replay", help="Print a recorded episode.")
     rep.add_argument("dir", type=Path)
 
     args = ap.parse_args(argv)
+    if args.cmd in ("run", "bench", "tasks", "preview"):
+        try:
+            catalog = Catalog.load(args.task_files)
+        except ValueError as err:
+            ap.error(str(err))
     if args.cmd == "tasks":
-        for t in TASKS.values():
-            print(f"{t.id:<20} {t.instruction}")
+        for t in catalog.tasks.values():
+            where = "" if t.source == "builtin" else f"  ({t.source})"
+            print(f"{t.id:<22} {t.instruction}{where}\n{'':<22} success: {t.spec()['success'] or 'not graded'}")
         return 0
+    if args.cmd == "preview":
+        return preview_command(args, catalog, ap)
     if args.cmd == "replay":
         view = ConsoleView()
         from .core import events as ev
@@ -170,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "bench":
-        return bench_command(args, ap)
+        return bench_command(args, ap, catalog)
 
     if args.cmd == "demo":
         from .demo import scripted_demo
@@ -182,8 +202,12 @@ def main(argv: list[str] | None = None) -> int:
     model = args.model or ("claude-opus-5-5" if args.provider == "anthropic" else None)
     if model is None:
         ap.error("--model is required with --provider openai")
-    out = default_out_dir(args.out, args.task)
-    cfg = SessionConfig(task=args.task, provider=args.provider, model=model, base_url=args.base_url,
+    try:
+        task = catalog.resolve(args.task)
+    except ValueError as err:
+        ap.error(str(err))
+    out = default_out_dir(args.out, task)
+    cfg = SessionConfig(task=task, provider=args.provider, model=model, base_url=args.base_url,
                         policy=args.policy, effort=args.effort, max_steps=args.max_steps,
                         keep_image_turns=args.keep_images, seed=args.seed, out_dir=out, reasoning=args.reasoning)
     control = ControlChannel()
@@ -199,17 +223,56 @@ def main(argv: list[str] | None = None) -> int:
         if not args.no_open:
             webbrowser.open(server.url)
     report = run_session(cfg, control=control, subscribers=[ConsoleView()])
-    print(f"   ground truth: success={report.success}\n   recording: {out}")
+    print_verdict(report)
+    print(f"   recording: {out}")
     if server is not None:
         print(f"Dashboard still open at {server.url} (Ctrl-C to quit)")
         try:
             threading.Event().wait()
         except KeyboardInterrupt:
             server.shutdown()
-    return 0 if report.success else 1
+    return 0 if report.success or not task.graded else 1
 
 
-def bench_command(args, ap: argparse.ArgumentParser) -> int:
+def print_verdict(report) -> None:
+    if not report.extra.get("graded", True):
+        print("   not graded: this task has no success check")
+        return
+    print(f"   ground truth: success={report.success}")
+    for c in report.extra.get("clauses", []):
+        vals = ", ".join(f"{k} = {v}" for k, v in c.values.items() if k != c.expr)
+        print(f"     {'✓' if c.ok else '✗'} {c.expr}" + (f"   ({vals})" if vals else ""))
+
+
+def preview_command(args, catalog: Catalog, ap: argparse.ArgumentParser) -> int:
+    from PIL import Image
+
+    from .body.mujoco_tabletop import MujocoTabletop
+    from .tasks import load_file
+
+    try:
+        if args.task.endswith((".toml", ".py")):
+            scene, _ = load_file(args.task)
+            name = Path(args.task).stem
+        else:
+            task = catalog.resolve(args.task)
+            scene, name = task.scene, task.id
+        body = MujocoTabletop(seed=args.seed, scene=scene)
+    except ValueError as err:
+        ap.error(str(err))
+    try:
+        obs = body.observe()
+        args.out.mkdir(parents=True, exist_ok=True)
+        for cam, rgb in obs.rgb.items():
+            path = args.out / f"{name}-{cam}.png"
+            Image.fromarray(rgb).save(path)
+            print(path)
+    finally:
+        body.close()
+    return 0
+
+
+def bench_command(args, ap: argparse.ArgumentParser, catalog: Catalog) -> int:
     import signal
 
     from .bench import Bench, BenchPlan, ModelSpec
@@ -221,9 +284,16 @@ def bench_command(args, ap: argparse.ArgumentParser) -> int:
     if args.seeds is not None and args.repeat is not None:
         ap.error("use --seeds or --repeat, not both")
     seeds = args.seeds if args.seeds is not None else list(range(args.repeat)) if args.repeat else [None]
-    plan = BenchPlan(tasks=list(dict.fromkeys(args.tasks)), models=models, seeds=seeds, policy=args.policy,
-                     effort=args.effort, max_steps=args.max_steps, keep_image_turns=args.keep_images,
-                     base_url=args.base_url, reasoning=args.reasoning)
+    try:
+        tasks = [catalog.tasks[t] if t in catalog.tasks else catalog.resolve(t) for t in dict.fromkeys(args.tasks)]
+    except ValueError as err:
+        ap.error(str(err))
+    try:
+        plan = BenchPlan(tasks=tasks, models=models, seeds=seeds, policy=args.policy,
+                         effort=args.effort, max_steps=args.max_steps, keep_image_turns=args.keep_images,
+                         base_url=args.base_url, reasoning=args.reasoning)
+    except ValueError as err:
+        ap.error(str(err))
     n = len(plan.cells())
     print(f"{n} episode(s): {len(plan.tasks)} task(s) x {len(models)} model(s) x {len(seeds)} seed(s). "
           "Each one calls the model API.")

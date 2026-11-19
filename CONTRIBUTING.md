@@ -9,7 +9,7 @@ git clone https://github.com/wrencanfly/openRocode.git
 cd openRocode
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[sim,agent,openai,dev]'
-pytest            # 40 tests, about 8 seconds, no API key
+pytest            # 79 tests, about 12 seconds, no API key
 rocode demo       # a scripted episode end to end
 ```
 
@@ -42,7 +42,9 @@ Add a test that runs the scripted demo, or an equivalent script, against your bo
 
 ### Add a task
 
-Add a `Task` to `rocode/tasks.py`: an id, the instruction the model reads, and a check that receives `body.ground_truth()`. Keep the instruction in plain language, and state the success condition precisely in the check, not in the instruction.
+Most tasks need no code: write a TOML task file with the objects, the instruction and a success expression, as described in [docs/tasks.md](docs/tasks.md). To add one to `examples/tasks/`, also add its solution to `SOLUTIONS` in `tests/test_tasks.py`, so the tests show it is reachable with this gripper; the tests already check that it does not start solved. Keep the instruction in plain language, and state the success condition precisely in the check, not in the instruction.
+
+A new predicate goes in `rocode/checks.py`, with its signature in `SIGNATURES`, a line in the module docstring and in docs/tasks.md, and a test. Built-in tasks live in `BUILTIN` in `rocode/tasks.py`; changing `DEFAULT_SCENE` changes them all, and every old seed's layout.
 
 ### Add a model provider
 

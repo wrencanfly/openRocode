@@ -71,7 +71,7 @@ def test_comparison_matrix(batch):
     assert row["quitter"]["rate"] == 0.0
     # Episodes that never started are errors beside the rate, not failures of the model.
     assert (row["broken"]["scored"], row["broken"]["errors"], row["broken"]["rate"]) == (0, 2, None)
-    assert all("ground-truth check failed" in e["why"] for e in row["quitter"]["episodes"])
+    assert all(e["why"] == "Called done, but on(mug, coaster) was false" for e in row["quitter"]["episodes"])
     assert [e["has_trace"] for e in row["broken"]["episodes"]] == [False, False]
     assert all("no API key" in e["why"] for e in row["broken"]["episodes"])
     assert d["batches"][0]["planned"] == 6 and d["batches"][0]["done"] == 6

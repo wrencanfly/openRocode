@@ -23,14 +23,14 @@ from .ext.pointing import Pointing
 from .ext.recorder import Recorder
 from .ext.safety import SafetyGate
 from .providers.base import ContextPolicy, Provider
-from .tasks import TASKS
+from .tasks import Task, get as get_task
 
 Policy = Literal["tools", "code", "both"]
 
 
 @dataclass
 class SessionConfig:
-    task: str
+    task: str | Task                       # a task id, or a Task (from a task file, or a typed instruction)
     provider: str = "anthropic"            # anthropic | openai
     model: str = "claude-opus-5-5"
     base_url: str | None = None            # for OpenAI-compatible servers
@@ -71,13 +71,13 @@ def run_session(cfg: SessionConfig, provider: Provider | None = None, control: C
                 subscribers: list[Callable[[Event], None]] = (), extra_extensions: list[Extension] = (),
                 body: Body | None = None) -> SessionReport:
     """Run one episode. A body passed in stays open for the caller; one created here is closed here."""
+    task = get_task(cfg.task)
     if body is None:
-        body = MujocoTabletop(seed=cfg.seed)
+        body = MujocoTabletop(seed=cfg.seed, scene=task.scene)
         try:
             return run_session(cfg, provider, control, subscribers, extra_extensions, body)
         finally:
             body.close()
-    task = TASKS[cfg.task]
     cameras = body.info().cameras
     pointing = Pointing(cameras, expose_motion=cfg.policy != "code")
     extensions: list[Extension] = [SafetyGate(), pointing]
@@ -102,20 +102,30 @@ def run_session(cfg: SessionConfig, provider: Provider | None = None, control: C
     # The first look goes through the normal tool path so recordings and viewers see it like any other step.
     first_look = lambda: agent.run_tool(ToolCall("initial_look", "look", {})).content  # noqa: E731
     meta = {"task_id": task.id, "body": body.info().name, "policy": cfg.policy, "seed": cfg.seed,
-            "batch": cfg.batch}
+            "batch": cfg.batch, "task_spec": task.spec()}
     outcome = agent.run(task.instruction, first_look, meta)
     truth = body.ground_truth()
-    success = task.check(truth)
+    success, clauses = task.evaluate(truth)
     if cfg.out_dir is not None:
-        evaluation = {"task": task.id, "success": success, "claimed": (outcome.finish or {}).get("success"),
-                      "ground_truth": {k: _plain(v) for k, v in truth.items()},
-                      "config": {k: str(v) if isinstance(v, Path) else v for k, v in asdict(cfg).items()}}
+        config = {k: str(v) if isinstance(v, Path) else v for k, v in asdict(_plain_cfg(cfg)).items()}
+        evaluation = {"task": task.id, "graded": task.graded, "success": success,
+                      "check": task.spec()["success"], "clauses": [c.to_dict() for c in clauses],
+                      "claimed": (outcome.finish or {}).get("success"),
+                      "ground_truth": {k: _plain(v) for k, v in truth.items()}, "config": config}
         (Path(cfg.out_dir) / "evaluation.json").write_text(json.dumps(evaluation, indent=2))
-    return SessionReport(task.id, success, outcome, cfg.out_dir)
+    return SessionReport(task.id, bool(success), outcome, cfg.out_dir, {"graded": task.graded, "clauses": clauses})
 
 
-def default_out_dir(root: Path, task: str) -> Path:
-    return Path(root) / f"{task}-{time.strftime('%Y%m%d-%H%M%S')}"
+def default_out_dir(root: Path, task: str | Task) -> Path:
+    name = task.id if isinstance(task, Task) else task
+    return Path(root) / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+
+
+def _plain_cfg(cfg: SessionConfig) -> SessionConfig:
+    """The config with its task as an id, for JSON (the full task is in EpisodeStart.config.task_spec)."""
+    from dataclasses import replace
+
+    return replace(cfg, task=get_task(cfg.task).id)
 
 
 def _plain(v):

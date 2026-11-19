@@ -65,3 +65,38 @@ print("finished at", r.height_cm, "cm, pictures", r.observation)
         pick_and_place_program,
         [("done", {"success": True, "summary": "The mug is on the coaster."})],
     ])
+
+
+def scripted_pick_and_place(body, moves: list[tuple[str, str]]) -> ScriptedProvider:
+    """A provider that moves each object onto another, in order, by reading ground truth instead of looking.
+
+    It shows that a task file's goal is reachable with this gripper; a model has to do the same by looking.
+    """
+    scene = body.scene
+
+    def step(obj: str, onto: str):
+        def program(request: Request):
+            gt = body.ground_truth()
+            top = lambda name: gt["objects"][name] + [0, 0, scene[name].height_cm / 200]  # noqa: E731
+            stored = request.images.latest()
+            cam = stored.observation.cameras["front"]
+            ox, oy = (round(v) for v in cam.project(top(obj)))
+            tx, ty = (round(v) for v in cam.project(top(onto)))
+            turn = "robot.turn(90)\n" if scene[obj].shape == "mug" else ""
+            code = f"""
+{turn}robot.move_to("front", {ox}, {oy}, hover_cm=6, observation="{stored.id}")
+r = robot.lower()
+r = robot.grip("close")
+if not r.holding:
+    raise SystemExit("missed {obj}")
+robot.nudge("front", up_cm=12)
+robot.move_to("front", {tx}, {ty}, hover_cm={scene[obj].height_cm + 3:g}, observation="{stored.id}")
+robot.lower()
+robot.grip("open")
+robot.nudge("front", up_cm=10)
+"""
+            return [("run_code", {"code": code})]
+        return program
+
+    return ScriptedProvider([*(step(a, b) for a, b in moves),
+                             [("done", {"success": True, "summary": "Moved everything."})]])

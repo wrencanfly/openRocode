@@ -1,4 +1,4 @@
-"""MuJoCo tabletop body: a floating parallel gripper, a mug, a block and a coaster, two cameras.
+"""MuJoCo tabletop body: a floating parallel gripper over a table, two cameras, and the objects of a Scene.
 
 The gripper is a free body welded to a mocap target, so motion is commanded in task space without an
 arm model. Reachability and joint limits of a real arm are therefore not modelled.
@@ -9,6 +9,7 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 
+from ..scene import DEFAULT_SCENE, Scene, SceneObject
 from .base import BodyInfo, CameraModel, CancelToken, Guard, Observation, Proprio, Receipt, Workspace
 
 SCENE_XML = """
@@ -34,20 +35,7 @@ SCENE_XML = """
     <geom name="floor" type="plane" pos="0 0 -0.75" size="2 2 0.1" material="floor"/>
     <geom name="table" type="box" pos="0 0 -0.02" size="0.45 0.35 0.02" material="table"/>
 
-    <geom name="coaster" type="cylinder" pos="-0.14 -0.08 0.003" size="0.05 0.003" rgba="0.93 0.74 0.20 1"/>
-
-    <body name="mug" pos="0.10 0.10 0.045">
-      <freejoint/>
-      <geom name="mug" type="cylinder" size="0.03 0.045" rgba="0.80 0.15 0.12 1" mass="0.15"/>
-      <geom name="mug_handle" type="box" pos="0.036 0 0.005" size="0.008 0.006 0.02"
-            rgba="0.80 0.15 0.12 1" mass="0.01"/>
-    </body>
-
-    <body name="block" pos="0.12 -0.12 0.02" euler="0 0 25">
-      <freejoint/>
-      <geom name="block" type="box" size="0.02 0.02 0.02" rgba="0.15 0.35 0.80 1" mass="0.05"/>
-    </body>
-
+{objects}
     <body name="target" mocap="true" pos="0 0 0.30"/>
     <body name="gripper" pos="0 0 0.30">
       <freejoint/>
@@ -83,15 +71,46 @@ SCENE_XML = """
 TCP_BELOW_PALM_M = 0.075
 MAX_OPENING_M = 0.09
 HOME_TCP = np.array([0.0, -0.05, 0.18])
-OBJECTS = ("mug", "block")
-INITIAL_XY = {"mug": (0.10, 0.10), "block": (0.12, -0.12)}
+GAP_M = 0.01   # loose objects start at least this far apart
+
+
+def _f(*vals: float) -> str:
+    return " ".join(f"{v:.6g}" for v in vals)
+
+
+def object_xml(o: SceneObject) -> str:
+    """MJCF for one scene object: a geom on the table if fixed, otherwise a free body."""
+    sx, sy, sz = (v / 100 for v in o.size_cm)
+    x, y = (v / 100 for v in o.at_cm)
+    rgba = _f(*o.color, 1)
+    kind = {"box": "box", "sphere": "sphere"}.get(o.shape, "cylinder")
+    size = {"box": _f(sx / 2, sy / 2, sz / 2), "sphere": _f(sx / 2)}.get(o.shape, _f(sx / 2, sz / 2))
+    if o.fixed:
+        return (f'    <geom name="{o.name}" type="{kind}" pos="{_f(x, y, sz / 2)}" size="{size}" rgba="{rgba}"'
+                f'{_euler(o)}/>\n')
+    out = (f'    <body name="{o.name}" pos="{_f(x, y, sz / 2)}"{_euler(o)}>\n      <freejoint/>\n'
+           f'      <geom name="{o.name}" type="{kind}" size="{size}" rgba="{rgba}" mass="{_f(o.mass_kg)}"/>\n')
+    if o.shape == "mug":   # a handle on the +x side, sized for the default 6 x 9 cm mug and scaled with height
+        out += (f'      <geom name="{o.name}_handle" type="box" pos="{_f(sx / 2 + 0.006, 0, sz * (0.005 / 0.09))}" '
+                f'size="{_f(0.008, 0.006, sz * (0.02 / 0.09))}"\n            rgba="{rgba}" mass="0.01"/>\n')
+    return out + "    </body>\n"
+
+
+def _euler(o: SceneObject) -> str:
+    return f' euler="0 0 {o.yaw_deg:.6g}"' if o.yaw_deg else ""
+
+
+def scene_xml(scene: Scene) -> str:
+    objects = "".join(object_xml(o) for o in (*scene.fixed, *scene.movable))
+    return SCENE_XML.replace("{objects}", objects)
 
 
 class MujocoTabletop:
     """Implements `rocode.body.base.Body`."""
 
-    def __init__(self, width: int = 640, height: int = 480, seed: int | None = None):
-        self.model = mujoco.MjModel.from_xml_string(SCENE_XML)
+    def __init__(self, width: int = 640, height: int = 480, seed: int | None = None, scene: Scene | None = None):
+        self.scene = scene or DEFAULT_SCENE
+        self.model = mujoco.MjModel.from_xml_string(scene_xml(self.scene))
         self.data = mujoco.MjData(self.model)
         self.width, self.height = width, height
         self._rgb = mujoco.Renderer(self.model, height, width)
@@ -100,7 +119,7 @@ class MujocoTabletop:
         self._target = self.model.body("target").mocapid[0]
         self._gripper_geoms = {self.model.geom(n).id for n in ("palm", "finger_left", "finger_right")}
         self._finger_geoms = (self.model.geom("finger_left").id, self.model.geom("finger_right").id)
-        self._static_geoms = {self.model.geom(n).id for n in ("floor", "table", "coaster")}
+        self._static_geoms = {self.model.geom(n).id for n in ("floor", "table", *(o.name for o in self.scene.fixed))}
         self._info = BodyInfo(
             name="mujoco-tabletop",
             cameras=("front", "side"),
@@ -126,11 +145,9 @@ class MujocoTabletop:
 
     def reset(self, seed: int | None = None) -> None:
         mujoco.mj_resetData(self.model, self.data)
-        rng = np.random.default_rng(seed) if seed is not None else None
-        for name, (x0, y0) in INITIAL_XY.items():
-            jitter = (rng.uniform(-0.04, 0.04), rng.uniform(-0.03, 0.03)) if rng else (0.0, 0.0)
-            qadr = self.model.jnt_qposadr[self.model.body(name).jntadr[0]]
-            self.data.qpos[qadr : qadr + 2] = [x0 + jitter[0], y0 + jitter[1]]
+        for o, (x, y) in zip(self.scene.movable, self._layout(seed), strict=True):
+            qadr = self.model.jnt_qposadr[self.model.body(o.name).jntadr[0]]
+            self.data.qpos[qadr : qadr + 2] = [x, y]
         self._yaw = 0.0
         self._opening_cmd = MAX_OPENING_M
         self.data.ctrl[:] = MAX_OPENING_M / 2
@@ -209,13 +226,48 @@ class MujocoTabletop:
         self._set_target(self._tcp())
 
     def ground_truth(self) -> dict:
-        return {
-            "objects": {n: self.data.body(n).xpos.copy() for n in OBJECTS},
-            "held": self._held_body(),
-            "tcp": self._tcp(),
-        }
+        """objects: every object's centre (metres, world). tilt_deg: how far each loose object's up axis leans
+        from vertical. held: the object between the fingers, or None. tcp: the fingertip centre."""
+        objects, tilt = {}, {}
+        for o in self.scene.objects:
+            if o.fixed:
+                objects[o.name] = self.data.geom(o.name).xpos.copy()
+            else:
+                objects[o.name] = self.data.body(o.name).xpos.copy()
+                up_z = float(self.data.body(o.name).xmat[8])
+                tilt[o.name] = round(float(np.degrees(np.arccos(np.clip(up_z, -1.0, 1.0)))), 2)
+        return {"objects": objects, "tilt_deg": tilt, "held": self._held_body(), "tcp": self._tcp()}
 
     # ---- internals -----------------------------------------------------------------------
+
+    def _layout(self, seed: int | None) -> list[tuple[float, float]]:
+        """Starting x, y (metres) of each loose object. A seed moves each one within its jitter, redrawing
+        until no two overlap or leave the reachable area."""
+        home = [(o.at_cm[0] / 100, o.at_cm[1] / 100) for o in self.scene.movable]
+        if seed is None:
+            return home
+        rng = np.random.default_rng(seed)
+        ws = self._info.workspace
+        for _ in range(200):
+            xy = []
+            for o, (x, y) in zip(self.scene.movable, home, strict=True):
+                jx, jy = o.jitter_cm[0] / 100, o.jitter_cm[1] / 100
+                xy.append((x + rng.uniform(-jx, jx), y + rng.uniform(-jy, jy)))
+            if self._layout_ok(xy, ws):
+                return xy
+        raise ValueError(f"seed {seed}: could not place the objects without overlap; spread them out or "
+                         "reduce their jitter_cm")
+
+    def _layout_ok(self, xy, ws: Workspace) -> bool:
+        objs = self.scene.movable
+        for i, (o, (x, y)) in enumerate(zip(objs, xy, strict=True)):
+            r = o.reach_radius_cm / 100
+            if not (ws.lo[0] <= x <= ws.hi[0] and ws.lo[1] <= y <= ws.hi[1]):
+                return False
+            for p, (px, py) in zip(objs[:i], xy[:i], strict=True):
+                if np.hypot(x - px, y - py) < r + p.reach_radius_cm / 100 + GAP_M:
+                    return False
+        return True
 
     def _camera(self, name: str) -> CameraModel:
         cam = self.model.camera(name)

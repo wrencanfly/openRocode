@@ -46,9 +46,13 @@ def why(e: dict) -> str:
         return ""
     if status == "error":
         return e.get("error") or "The episode ended with an error"
-    if status in ("pending", "running"):
+    if status in ("pending", "running", "ungraded"):
         return ""
-    return WHY.get(e.get("reason") or "", e.get("reason") or "")
+    failed = e.get("failed_checks") or []
+    if status == "failed" and failed and e.get("reason") == "done":
+        return f"Called done, but {' and '.join(failed)} was false"
+    base = WHY.get(e.get("reason") or "", e.get("reason") or "")
+    return f"{base}; {' and '.join(failed)} was false" if status == "failed" and failed else base
 
 
 def _cell(episodes: list[dict]) -> dict:
@@ -65,6 +69,7 @@ def _cell(episodes: list[dict]) -> dict:
         "stopped": sum(e["status"] == "stopped" for e in episodes),
         "running": sum(e["status"] == "running" for e in episodes),
         "pending": sum(e["status"] == "pending" for e in episodes),
+        "ungraded": sum(e["status"] == "ungraded" for e in episodes),
         "rate": round(len(ok) / len(done), 3) if done else None,
         "turns_median": median([e["turns"] for e in done if e.get("turns") is not None] or [0]) if done else None,
         "seconds_median": median([e["seconds"] for e in done if e.get("seconds") is not None] or [0]) if done else None,
